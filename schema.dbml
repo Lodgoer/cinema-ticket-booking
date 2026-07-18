@@ -1,0 +1,111 @@
+Table cinema {
+  id bigserial [pk]
+  name varchar
+  city varchar
+  address varchar
+  created_at timestamptz
+}
+
+Table hall {
+  id bigserial [pk]
+  cinema_id bigint [ref: > cinema.id]
+  name varchar
+  capacity int
+}
+
+Table seat_type {
+  id bigserial [pk]
+  name varchar [unique]
+  price numeric
+}
+
+Table seat {
+  id bigserial [pk]
+  hall_id bigint [ref: > hall.id]
+  row_label varchar
+  seat_number int
+  seat_type_id bigint [ref: > seat_type.id]
+}
+
+Table movie {
+  id bigserial [pk]
+  title varchar
+  duration_minutes int
+  genre varchar
+  release_year int
+}
+
+Table showtime {
+  id bigserial [pk]
+  movie_id bigint [ref: > movie.id]
+  hall_id bigint [ref: > hall.id]
+  starts_at timestamptz
+  ends_at timestamptz
+}
+
+Table app_user {
+  id bigserial [pk]
+  name varchar
+  email varchar [unique]
+  password_hash varchar
+  role varchar
+  created_at timestamptz
+}
+
+Table cinema_manager {
+  id bigserial [pk]
+  user_id bigint [ref: > app_user.id]
+  cinema_id bigint [ref: > cinema.id]
+}
+
+Table showtime_seat {
+  id bigserial [pk]
+  showtime_id bigint [ref: > showtime.id]
+  seat_id bigint [ref: > seat.id]
+  status varchar [note: 'available / booked -- held lives only in Redis']
+  price_snapshot numeric
+}
+
+Table discount {
+  id bigserial [pk]
+  code varchar [unique]
+  type varchar
+  value numeric
+  valid_from timestamptz
+  valid_to timestamptz
+  max_uses int
+  used_count int
+}
+
+Table booking {
+  id bigserial [pk]
+  user_id bigint [ref: > app_user.id]
+  discount_id bigint [ref: > discount.id]
+  status varchar
+  total_price numeric
+  created_at timestamptz
+}
+
+Table booking_seat {
+  id bigserial [pk]
+  booking_id bigint [ref: > booking.id]
+  showtime_seat_id bigint [ref: > showtime_seat.id]
+  status varchar [note: 'active / cancelled -- unique index on showtime_seat_id WHERE status=active']
+}
+
+Table payment {
+  id bigserial [pk]
+  booking_id bigint [ref: > booking.id]
+  amount numeric
+  status varchar
+  idempotency_key varchar [unique]
+  provider_ref varchar
+  created_at timestamptz
+}
+
+Table ticket {
+  id bigserial [pk]
+  booking_seat_id bigint [ref: - booking_seat.id]
+  qr_code varchar [unique]
+  issued_at timestamptz
+}
