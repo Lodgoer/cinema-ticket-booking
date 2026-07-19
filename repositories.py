@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import Base
-from models import Cinema, Hall, SeatType, Seat, Movie, Showtime
+from models import Cinema, Hall, SeatType, Seat, Movie, Showtime, AppUser
 
 ModelType = TypeVar("ModelType", bound=Base)
 
@@ -92,3 +92,13 @@ class ShowtimeRepository(BaseRepository[Showtime]):
             select(Showtime).where(Showtime.hall_id == hall_id)
         )
         return list(result.scalars().all())
+
+
+class AppUserRepository(BaseRepository[AppUser]):
+    model = AppUser
+
+    async def get_by_email(self, email: str) -> AppUser | None:
+        result = await self.session.execute(
+            select(AppUser).where(AppUser.email == email)
+        )
+        return result.scalar_one_or_none()
