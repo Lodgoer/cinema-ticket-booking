@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from routers import router as admin_router
 from auth_router import auth_router
 from hold_router import hold_router
+from booking_router import booking_router
 
 import asyncpg
 import redis
@@ -11,6 +12,7 @@ app = FastAPI()
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(hold_router)
+app.include_router(booking_router)
 
 DATABASE_URL = "postgresql://postgres:mysecret@localhost:5432/cinema_db"
 REDIS_URL = "redis://localhost:6379"
