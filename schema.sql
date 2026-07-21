@@ -146,6 +146,8 @@ CREATE TABLE booking (
     status          VARCHAR(20) NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'confirmed', 'cancelled', 'expired')),
     total_price     NUMERIC(10,2) NOT NULL CHECK (total_price >= 0),
+    expires_at      TIMESTAMPTZ,                            -- when the hold expires;
+                                                              -- background worker sweeps these
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

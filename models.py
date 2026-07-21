@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, Numeric, Integer, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
+from sqlalchemy import String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
 
@@ -149,6 +149,7 @@ class Booking(Base):
     discount_id: Mapped[int | None] = mapped_column(ForeignKey("discount.id"))
     status: Mapped[str] = mapped_column(String(20), server_default="pending")
     total_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(server_default=text("now()"))
 
     user: Mapped["AppUser"] = relationship()
