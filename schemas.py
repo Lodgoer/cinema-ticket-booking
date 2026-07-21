@@ -156,3 +156,56 @@ class UserRead(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ---------- Booking ----------
+
+class BookingCreate(BaseModel):
+    showtime_id: int
+    seat_ids: list[int]
+
+
+class BookingSeatRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    showtime_seat_id: int
+    status: str
+
+
+class BookingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    status: str
+    total_price: Decimal
+    expires_at: datetime
+    created_at: datetime
+    booking_seats: list[BookingSeatRead]
+
+
+# ---------- Payment ----------
+
+class PaymentCreate(BaseModel):
+    booking_id: int
+    idempotency_key: str
+
+
+class PaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    booking_id: int
+    amount: Decimal
+    status: str
+    idempotency_key: str
+    provider_ref: str | None
+    created_at: datetime
+
+
+# ---------- Ticket ----------
+
+class TicketRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    booking_seat_id: int
+    qr_code: str
+    issued_at: datetime
