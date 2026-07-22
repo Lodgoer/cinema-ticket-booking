@@ -18,6 +18,7 @@ from auth import get_current_user
 from database import get_session
 from models import AppUser, ShowtimeSeat
 from redis_client import get_redis
+from waiting_room import is_admitted, waiting_room_key
 
 hold_router = APIRouter(prefix="/showtimes/{showtime_id}", tags=["seat-hold"])
 
@@ -36,6 +37,19 @@ async def hold_seat(
     session: AsyncSession = Depends(get_session),
     r: Redis = Depends(get_redis),
 ):
+    # Waiting room check: if the waiting room is active for this showtime
+    # (i.e. the queue ZSET has any members or admitted tokens exist), the user
+    # must hold a valid admission token before they can hold a seat.
+    queue_exists = await r.exists(waiting_room_key(showtime_id))
+    if queue_exists:
+        admitted = await is_admitted(r, showtime_id, user.id)
+        if not admitted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be admitted through the waiting room before holding seats. "
+                       "POST /waiting-room/{showtime_id}/join to enter the queue.",
+            )
+
     # Postgres check first: a seat that's already 'booked' (paid for) should
     # never even reach the Redis hold step — no point holding a sold seat.
     result = await session.execute(
