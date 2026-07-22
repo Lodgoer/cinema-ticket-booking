@@ -13,6 +13,13 @@ Prerequisites:
     - Docker containers running (docker compose up -d)
     - Database migrated (alembic upgrade head)
     - Test data seeded (cinema, hall, seats, movie, showtime)
+
+TODO (technical debt — address during code review):
+    Tests use hardcoded showtime_id=1 and seat_id=1 which makes them
+    depend on specific seeded data. Should be refactored to use test
+    fixtures or create isolated test data per run (cinema → hall → seats
+    → movie → showtime) to avoid inter-test coupling and enable parallel
+    execution.
 """
 import asyncio
 import pytest
