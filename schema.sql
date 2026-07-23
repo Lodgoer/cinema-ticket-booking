@@ -1,12 +1,4 @@
--- ============================================================
--- Cinema Ticket Booking — PostgreSQL Schema
---
--- This is database-first: the SQL here is the source of truth,
--- and the SQLAlchemy models get written to match it, not the
--- other way around.
--- ============================================================
-
--- ---------- Cinema chain: cinemas and halls ----------
+-- Cinema chain: cinemas and halls
 
 CREATE TABLE cinema (
     id          BIGSERIAL PRIMARY KEY,
@@ -24,7 +16,7 @@ CREATE TABLE hall (
     UNIQUE (cinema_id, name)
 );
 
--- ---------- Seat types and physical seats ----------
+-- Seat types and physical seats
 
 CREATE TABLE seat_type (
     id      BIGSERIAL PRIMARY KEY,
@@ -42,7 +34,7 @@ CREATE TABLE seat (
                                                    -- sharing the same spot in a hall
 );
 
--- ---------- Movies and showtimes ----------
+--Movies and showtimes
 
 CREATE TABLE movie (
     id                  BIGSERIAL PRIMARY KEY,
@@ -79,7 +71,7 @@ CREATE INDEX idx_showtime_hall_start ON showtime (hall_id, starts_at);
 --         tstzrange(start_time, end_time) WITH &&
 --     );
 
--- ---------- Users and per-cinema managers ----------
+-- Users and per-cinema managers
 
 CREATE TABLE app_user (
     id              BIGSERIAL PRIMARY KEY,
@@ -98,8 +90,7 @@ CREATE TABLE cinema_manager (
                                           -- just not be added to the same one twice
 );
 
--- ---------- The contested resource: seat status per showtime ----------
-
+-- The contested resource: seat status per showtime
 -- A seat here is only ever 'available' or 'booked'. The temporary 'held'
 -- state - someone has it selected but hasn't paid yet - lives in Redis with
 -- a TTL, not in this table. Writing to Postgres on every seat click would
@@ -136,7 +127,7 @@ CREATE TABLE discount (
     CHECK (valid_to > valid_from)
 );
 
--- ---------- Bookings ----------
+-- Bookings
 
 CREATE TABLE booking (
     id              BIGSERIAL PRIMARY KEY,
@@ -180,7 +171,7 @@ CREATE UNIQUE INDEX uq_active_booking_seat
     ON booking_seat (showtime_seat_id)
     WHERE status = 'active';
 
--- ---------- Payment and tickets ----------
+-- Payment and tickets
 
 CREATE TABLE payment (
     id                  BIGSERIAL PRIMARY KEY,
