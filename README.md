@@ -2,6 +2,16 @@
 
 A ticket-booking backend for a cinema chain, built with FastAPI, PostgreSQL (async), and Redis.
 
+## Overview
+
+This project models the hardest problem in ticket-booking systems: guaranteeing that **two customers can never end up with the same seat**, even under heavy concurrent load, while still keeping the booking flow fast and pleasant to use. It covers the full journey from an admin setting up cinemas, halls, and showtimes, through a customer selecting a seat, holding it, paying for it, and receiving a QR-coded ticket — plus a virtual waiting room for high-demand showtimes and a management reporting layer.
+
+The design deliberately mirrors how real systems (Ticketmaster, BookMyShow, Airbnb) solve the same double-booking problem: a fast optimistic layer (Redis) for the common case, backed by a hard structural guarantee (a Postgres constraint) that holds even if the fast layer fails.
+
+**Stack:** FastAPI (async) · PostgreSQL 16 · Redis 7 · SQLAlchemy 2.0 (async) · Alembic · arq · Docker Compose
+
+**ERD:** [docs/erd.pdf](docs/erd.pdf)
+
 ## Architecture
 
 | Layer | File(s) | Purpose |
@@ -17,21 +27,47 @@ A ticket-booking backend for a cinema chain, built with FastAPI, PostgreSQL (asy
 
 ## Key Design Decisions
 
-### Dual-layer seat protection (Redis + Postgres)
-- **Redis** handles the fast, optimistic hold (`SET NX EX 600`) — prevents most concurrent double-booking at microsecond speed.
-- **Postgres** has a partial unique index (`uq_active_booking_seat WHERE status = 'active'`) — catches any edge case where Redis and Postgres state diverge. This makes double-booking *structurally impossible*.
-- The booking endpoint catches `IntegrityError` and translates it to a clean `409 Conflict`.
+### Why `ShowtimeSeat` is separate from `Seat`
 
-### Waiting Room
-- **Redis Sorted Set** (`waiting_room:{showtime_id}`) with join timestamp as score — gives FIFO ordering for free.
-- **Batch admission**: N users are admitted every X seconds (configurable `BATCH_SIZE` and `ADMISSION_INTERVAL`).
-- **Admission token**: admitted users get a short-lived Redis key (`waiting_room_token:{showtime_id}:{user_id}`) valid for **120 seconds** — just long enough to hold seats. The existing 600-second seat-hold TTL takes over once a seat is held.
-- The waiting room is **optional per showtime** — if no one has joined, seat holds work as before.
+A `Seat` (row A, seat 1, VIP) is a physical fixture of a hall — it exists once and is reused across thousands of showtimes over its lifetime. Its *booking status*, however, is meaningless without reference to a specific showtime: seat A1 can be booked for the 5pm screening and free for the 8pm screening on the same day. Storing status directly on `Seat` would allow only one status per seat *ever*. `ShowtimeSeat` creates one row per (seat, showtime) pair, so each combination carries its own independent status.
 
-### Statistics & Reports — Role-Based Access
-- **Admin** users see statistics across ALL cinemas.
-- **Theater manager** users see statistics ONLY for cinemas they manage (via the `cinema_manager` junction table).
-- **Customer** users have no access to statistics.
+### Why `price_snapshot` instead of a live link to `seat_type.price`
+
+`showtime_seat.price_snapshot` copies the seat type's price at the moment a showtime is created, rather than joining to `seat_type.price` live at read time. This is deliberate: if the cinema later changes VIP pricing, tickets already sold at the old price must not silently change value. Snapshotting price at showtime-creation time keeps historical bookings and revenue reports accurate regardless of later price changes.
+
+### Why `held` lives only in Redis, never in Postgres
+
+`showtime_seat.status` only ever takes the values `available` / `booked` — there is no `held` state in Postgres. A "held" seat (someone has it selected but hasn't paid) is a high-frequency, mostly-throwaway piece of state — most holds expire without ever converting to a booking. Writing every hold/release to Postgres would mean hammering the primary database on every seat click. Instead, holds live entirely in Redis as a TTL key (`SET NX EX 600`), and Postgres is only touched at the two moments that actually matter: a payment succeeding (`available` → `booked`) or a booking being cancelled/expiring (`booked` → `available`).
+
+### The partial unique index on `booking_seat` — and the bug it fixes
+
+The first version of `booking_seat` used a plain `UNIQUE (showtime_seat_id)` constraint. This was a trap: cancelling a booking only flips `booking.status` — it never deletes the corresponding `booking_seat` row. With a plain `UNIQUE` constraint, the very first booking to ever claim a seat would lock it **forever**, even after being cancelled, because that old row (now irrelevant) still satisfied the uniqueness check and blocked any new claim on the same seat.
+
+The fix: `booking_seat` carries its own `active` / `cancelled` status, and uniqueness is enforced only among `active` rows, via a **partial unique index**:
+
+```sql
+CREATE UNIQUE INDEX uq_active_booking_seat
+    ON booking_seat (showtime_seat_id)
+    WHERE status = 'active';
+```
+
+A cancelled row is excluded from the uniqueness check entirely — a new customer can claim the same seat with a brand-new `active` row, while the cancelled row remains as history. This is the single constraint the entire double-booking guarantee hinges on: it is enforced by Postgres itself, not application code, so it holds even under a race between two concurrent requests.
+
+### Why this is enforced in the database, not application code
+
+A check like "is this seat free? if so, book it" written in application code is inherently non-atomic: between the check and the write, another request can slip in and make the same decision based on stale information (a classic race condition). A database constraint, by contrast, is evaluated atomically by Postgres itself as part of the `INSERT` — there is no window where two concurrent requests can both "pass" the check. This is why the seat-claim guarantee lives in the schema, not in a `if seat.is_free:` check in Python.
+
+### Why background sweep, not lazy check, for booking expiry
+
+`booking.expires_at` marks when an unpaid booking should be released. Two strategies were considered:
+- **Lazy check** — check expiry at read time, right when another customer tries to claim the seat. Zero extra cost, reacts instantly, but touches more endpoints and is more complex to implement correctly.
+- **Sweep** (chosen) — a background worker (`worker.py`, via `arq`) scans for expired pending bookings every 60 seconds and releases them.
+
+Sweep was chosen for simplicity within a one-week project scope. The trade-off — up to a 1-minute window where a seat appears unavailable even though its hold technically expired — was judged acceptable at this scale. Lazy check is documented as a future improvement. (Redis keyspace notifications were also considered and rejected: Redis Pub/Sub is fire-and-forget, so a disconnected consumer permanently loses expiry events — an unacceptable risk for a money-relevant operation like releasing a paid-for hold.)
+
+### Why `CinemaManager` for row-level access control
+
+`theater_manager` users should only see data (statistics, reports) for cinemas they actually manage — not the entire chain. Rather than hardcoding cinema ownership onto the `AppUser` table (which would only allow one manager per cinema), a junction table `cinema_manager (user_id, cinema_id)` was introduced. This allows a many-to-many relationship (one manager can cover several cinemas; a cinema could have more than one manager) and keeps authorization logic in one place: every stats/reports endpoint calls `get_managed_cinema_ids()`, which returns `None` for admins (no filter) or a list of cinema IDs for managers (used in a `WHERE cinema_id IN (...)` filter).
 
 ### Materialized View: Occupancy Rate
 
@@ -47,6 +83,41 @@ A ticket-booking backend for a cinema chain, built with FastAPI, PostgreSQL (asy
 The materialized view is refreshed every **5 minutes** by the background worker (`REFRESH MATERIALIZED VIEW CONCURRENTLY`). The `CONCURRENTLY` flag ensures the view remains readable during refresh.
 
 **Trade-off**: The occupancy data may be up to 5 minutes stale. This is acceptable for dashboard views where approximate numbers are fine. For real-time seat availability, the Redis hold map + Postgres status is the source of truth.
+
+## How I Tested It
+
+### Concurrency: proving double-booking is structurally impossible
+
+`test_concurrency.py` simulates two users racing for the same seat with `asyncio.gather`, firing both hold requests simultaneously:
+
+```python
+hold_a, hold_b = await asyncio.gather(
+    client.post(f"/showtimes/{id}/seats/{id}/hold", headers=headers_a),
+    client.post(f"/showtimes/{id}/seats/{id}/hold", headers=headers_b),
+)
+assert results.count(200) == 1  # exactly one winner
+```
+
+This validates both protection layers together: Redis `SET NX` ensures only one hold succeeds under normal conditions, and the Postgres partial unique index is the structural backstop that would still catch a double-claim even if the Redis layer were somehow bypassed. A second test confirms that once a seat is `booked`, any further hold attempt is rejected with `409`.
+
+Manual verification of the full claim → cancel → reclaim cycle was also run directly against Postgres (`psql`) during initial schema design: a seat was claimed, a second claim attempt correctly failed with `duplicate key value violates unique constraint "uq_active_booking_seat"`, the first booking was cancelled, and the seat was then successfully reclaimed — confirming the partial index behaves exactly as designed, not just in theory.
+
+### Unit tests
+
+`test_unit.py` (20 tests, all passing) covers:
+- Payment state machine transitions (valid and invalid)
+- `IntegrityError` → `409 Conflict` translation
+- Price calculation from `price_snapshot` (including decimal precision)
+- Waiting room FIFO ordering guarantees
+
+```bash
+pytest test_unit.py -v      # 20 passed
+pytest test_concurrency.py -v
+```
+
+### End-to-end flow tested manually via Swagger (`/docs`)
+
+`hold seat → create booking (pending) → pay → get tickets (QR code)`, confirmed at each step that the seat map correctly reflected `available` → `held` → `booked` transitions, combining live Redis state with Postgres state.
 
 ## API Endpoints
 
@@ -137,3 +208,9 @@ Key settings in `booking_service.py`:
 
 Key settings in `hold_router.py`:
 - `HOLD_TTL_SECONDS = 600` — seat hold TTL in Redis
+
+## Known Limitations
+
+- `test_concurrency.py` uses hardcoded `showtime_id=1` and `seat_id=1`, coupling tests to specific seeded data. Planned fix: isolated test fixtures per test run (see TODO in the test file).
+- `auth.py`'s `SECRET_KEY` is currently hardcoded for local development and must move to an environment variable (`.env`) before any real deployment.
+- Booking expiry uses a 60-second sweep rather than lazy/event-driven expiry (see "Why background sweep" above) — acceptable at this project's scale but noted as a scaling consideration.
