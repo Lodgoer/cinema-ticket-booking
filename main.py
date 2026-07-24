@@ -1,12 +1,12 @@
 from fastapi import FastAPI
 
-from routers import router as admin_router
-from auth_router import auth_router
-from hold_router import hold_router
-from booking_router import booking_router
-from waiting_room_router import waiting_room_router
-from stats_router import stats_router
-from reports_router import reports_router
+from app.routers.admin_router import router as admin_router
+from app.routers.auth_router import auth_router
+from app.routers.hold_router import hold_router
+from app.routers.booking_router import booking_router
+from app.routers.waiting_room_router import waiting_room_router
+from app.routers.stats_router import stats_router
+from app.routers.reports_router import reports_router
 
 import asyncpg
 import redis

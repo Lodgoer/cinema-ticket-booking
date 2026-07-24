@@ -19,16 +19,16 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import async_session
-from models import Booking, BookingSeat, ShowtimeSeat
-from redis_client import redis_client
-from waiting_room import (
+
+from app.database import async_session
+from app.models import Booking, BookingSeat, ShowtimeSeat
+from app.redis_client import redis_client
+from app.services.waiting_room import (
     waiting_room_key,
     admit_batch,
     BATCH_SIZE,
     ADMISSION_INTERVAL,
 )
-
 
 async def sweep_expired_bookings(ctx) -> int:
     """Cancel bookings past their expires_at, releasing seats.
