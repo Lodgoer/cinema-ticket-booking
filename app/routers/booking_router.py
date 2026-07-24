@@ -11,12 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import get_current_user
-from database import get_session, async_session
-from models import AppUser, Booking, BookingSeat, Ticket, Payment
-from schemas import BookingCreate, BookingRead, PaymentCreate, PaymentRead, TicketRead
-from booking_service import create_booking, cancel_booking, confirm_payment
-from payment_provider import FakePaymentProvider
+from app.auth import get_current_user
+from app.database import get_session, async_session
+from app.models import AppUser, Booking, BookingSeat, Ticket, Payment
+from app.schemas import BookingCreate, BookingRead, PaymentCreate, PaymentRead, TicketRead
+from app.services.booking_service import create_booking, cancel_booking, confirm_payment
+from app.services.payment_provider import FakePaymentProvider
 
 import uuid
 

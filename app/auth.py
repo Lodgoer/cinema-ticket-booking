@@ -17,8 +17,8 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_session
-from models import AppUser
+from app.database import get_session
+from app.models import AppUser
 
 # In a real deployment this must come from an environment variable, never
 # hardcoded — flagged here as a TODO for when .env / pydantic-settings gets

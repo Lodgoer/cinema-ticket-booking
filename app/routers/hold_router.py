@@ -14,11 +14,11 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import get_current_user
-from database import get_session
-from models import AppUser, ShowtimeSeat
-from redis_client import get_redis
-from waiting_room import is_admitted, waiting_room_key
+from app.auth import get_current_user
+from app.database import get_session
+from app.models import AppUser, ShowtimeSeat
+from app.redis_client import get_redis
+from app.services.waiting_room import is_admitted, waiting_room_key
 
 hold_router = APIRouter(prefix="/showtimes/{showtime_id}", tags=["seat-hold"])
 

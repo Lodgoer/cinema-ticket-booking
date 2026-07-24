@@ -17,11 +17,11 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import get_current_user, require_role
-from database import get_session
-from models import AppUser, Showtime
-from redis_client import get_redis
-from waiting_room import (
+from app.auth import get_current_user, require_role
+from app.database import get_session
+from app.models import AppUser, Showtime
+from app.redis_client import get_redis
+from app.services.waiting_room import (
     join_waiting_room,
     get_queue_status,
     is_admitted,

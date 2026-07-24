@@ -8,8 +8,8 @@ from typing import Generic, TypeVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import Base
-from models import Cinema, Hall, SeatType, Seat, Movie, Showtime, AppUser
+from app.database import Base
+from app.models import Cinema, Hall, SeatType, Seat, Movie, Showtime, AppUser
 
 ModelType = TypeVar("ModelType", bound=Base)
 

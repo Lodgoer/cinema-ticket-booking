@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func, case, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import require_role
-from database import get_session
-from models import (
+from app.auth import require_role
+from app.database import get_session
+from app.models import (
     AppUser, CinemaManager, Cinema, Hall, Seat,
     Showtime, ShowtimeSeat, Booking, BookingSeat, Payment, Movie,
 )

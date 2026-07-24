@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Payment
-from booking_service import create_booking
-from waiting_room import WAITING_ROOM_TOKEN_TTL_SECONDS
+from app.models import Payment
+from app.services.booking_service import create_booking
+from app.services.waiting_room import WAITING_ROOM_TOKEN_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ class TestSeatClaimIntegrityError:
         """The booking_router catches ValueError and returns 409."""
         # This is a structural test — verify the router code has the right pattern
         import inspect
-        from booking_router import create_booking_endpoint
+        from app.routers.booking_router import create_booking_endpoint
 
         source = inspect.getsource(create_booking_endpoint)
         assert "409" in source or "CONFLICT" in source, (
@@ -171,7 +171,7 @@ class TestSeatClaimIntegrityError:
         """The error message from booking_service indicates which seats were taken."""
         # This verifies the ValueError message format from booking_service.py
         # When IntegrityError occurs: raise ValueError("One or more seats were just taken by another customer")
-        from booking_service import create_booking
+        from app.services.booking_service import create_booking
         source = inspect.getsource(create_booking)
         assert "just taken" in source.lower() or "IntegrityError" in source, (
             "create_booking must handle IntegrityError with a user-friendly message"
@@ -244,7 +244,7 @@ class TestWaitingRoomAdmissionOrdering:
         # but we can verify the data structure and function behavior.
 
         # Verify that the waiting room functions exist and have the right signatures
-        from waiting_room import join_waiting_room, admit_batch, get_queue_status
+        from app.services.waiting_room import join_waiting_room, admit_batch, get_queue_status
         assert callable(join_waiting_room)
         assert callable(admit_batch)
         assert callable(get_queue_status)
@@ -274,6 +274,6 @@ class TestWaitingRoomAdmissionOrdering:
 
     def test_batch_size_configurable(self):
         """Batch size should be configurable, not hardcoded."""
-        from waiting_room import BATCH_SIZE, ADMISSION_INTERVAL
+        from app.services.waiting_room import BATCH_SIZE, ADMISSION_INTERVAL
         assert isinstance(BATCH_SIZE, int) and BATCH_SIZE > 0
         assert isinstance(ADMISSION_INTERVAL, int) and ADMISSION_INTERVAL > 0

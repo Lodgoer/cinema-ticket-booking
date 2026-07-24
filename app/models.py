@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from sqlalchemy import String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from database import Base
+from app.database import Base
 
 
 class Cinema(Base):

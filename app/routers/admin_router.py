@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_session
-from auth import require_role
-from models import Showtime, ShowtimeSeat
-from repositories import (
+from app.database import get_session
+from app.auth import require_role
+from app.models import Showtime, ShowtimeSeat
+from app.repositories import (
     CinemaRepository, HallRepository, SeatTypeRepository,
     SeatRepository, MovieRepository, ShowtimeRepository,
 )
-from schemas import (
+from app.schemas import (
     CinemaCreate, CinemaRead, CinemaUpdate,
     HallCreate, HallRead, HallUpdate,
     SeatTypeCreate, SeatTypeRead,

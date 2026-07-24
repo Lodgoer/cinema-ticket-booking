@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import (
+from app.models import (
     Booking, BookingSeat, ShowtimeSeat, Ticket, Payment,
 )
 
