@@ -113,7 +113,7 @@ CREATE TABLE showtime_seat (
 
 CREATE INDEX idx_showtime_seat_showtime ON showtime_seat (showtime_id);
 
--- ---------- Discounts ----------
+-- Discounts
 
 CREATE TABLE discount (
     id          BIGSERIAL PRIMARY KEY,

@@ -176,7 +176,19 @@ pytest test_concurrency.py -v
 ## Running
 
 ```bash
-# Start infrastructure
+# Clone the repo
+git clone https://github.com/Lodgoer/cinema-ticket-booking.git
+cd cinema-ticket-booking
+
+# Create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start infrastructure (Postgres + Redis)
 docker compose up -d
 
 # Run migrations
@@ -188,13 +200,20 @@ alembic upgrade head
 # Start the server
 uvicorn main:app --reload
 
-# Start the background worker
+# In a separate terminal: start the background worker
 python -m arq worker.WorkerSettings
 
-# Run tests
-pytest test_concurrency.py -v
+# In a separate terminal: run tests
 pytest test_unit.py -v
+pytest test_concurrency.py -v   # requires the server running
 ```
+
+Once running, interactive API docs are available at `http://127.0.0.1:8000/docs`.
+
+### Prerequisites
+- Docker Desktop (for Postgres and Redis containers)
+- Python 3.11+
+- A VPN may be required to pull Docker images or push/pull from GitHub, depending on network restrictions in some regions.
 
 ## Configuration
 
