@@ -12,6 +12,7 @@ import asyncpg
 import redis
 
 app = FastAPI()
+
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(hold_router)
