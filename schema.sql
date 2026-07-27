@@ -58,18 +58,19 @@ CREATE TABLE showtime (
 
 CREATE INDEX idx_showtime_hall_start ON showtime (hall_id, starts_at);
 
--- Optional: this would stop two showtimes from overlapping in the same hall
--- at the database level, using an exclusion constraint (needs the btree_gist
--- extension). Worth mentioning in an interview - it shows a business rule can
--- be enforced as a real DB constraint instead of only checked in app code.
--- Leaving it commented out for now since it pulls in an extra extension.
--- CREATE EXTENSION IF NOT EXISTS btree_gist;
--- ALTER TABLE showtime
---     ADD CONSTRAINT no_overlapping_showtimes
---     EXCLUDE USING gist (
---         hall_id WITH =,
---         tstzrange(start_time, end_time) WITH &&
---     );
+-- Prevents two showtimes from overlapping in the same hall, enforced at
+-- the database level. Added in a dedicated migration on Day 2 (moved up
+-- from the original plan, since it was a natural fit while working
+-- directly on the showtime table). The application layer (routers.py)
+-- catches the resulting IntegrityError and returns a clean 409 Conflict
+-- instead of letting the raw database error surface.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+ALTER TABLE showtime
+    ADD CONSTRAINT no_overlapping_showtimes
+    EXCLUDE USING gist (
+        hall_id WITH =,
+        tstzrange(starts_at, ends_at) WITH &&
+    );
 
 -- Users and per-cinema managers
 
@@ -192,9 +193,17 @@ CREATE TABLE ticket (
     issued_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+
 -- ============================================================
--- How a cancellation works, as an application-level transaction.
+-- How a cancellation works.
 -- Keeps booking / booking_seat / showtime_seat in sync with each other.
+--
+-- This was originally sketched here as pseudocode during Day 1 schema
+-- design. It is now a real, tested implementation:
+-- see `booking_service.py::cancel_booking()` (and `sweep_expired_bookings()`
+-- for the same logic applied to bookings that expired instead of being
+-- explicitly cancelled). The pseudocode below is kept as a quick reference
+-- for the transaction shape.
 -- ============================================================
 --
 -- BEGIN;
@@ -225,3 +234,4 @@ CREATE TABLE ticket (
 -- All five statements commit or roll back together, so a crash between
 -- steps 4 and 5 can never leave booking_seat cancelled while showtime_seat
 -- is still sitting there marked 'booked'.
+ 
