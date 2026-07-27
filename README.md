@@ -232,4 +232,5 @@ Key settings in `app/routers/hold_router.py`:
 
 - `tests/test_concurrency.py` uses hardcoded `showtime_id=1` and `seat_id=1`, coupling tests to specific seeded data. Planned fix: isolated test fixtures per test run (see TODO in the test file).
 - `app/auth.py`'s `SECRET_KEY` is currently hardcoded for local development and must move to an environment variable (`.env`) before any real deployment.
-- Booking expiry uses a 60-second sweep rather than lazy/event-driven expiry (see "Why background sweep" above) — acceptable at this project's scale but noted as a scaling consideration.
+- Booking expiry uses a 60-second sweep rather than lazy/event-driven expiry (see "Why background sweep" above) — acceptable at this project's scale but noted as a scaling consideration..
+- Some secret keys are hard coded.
