@@ -107,7 +107,7 @@ Hold Seat → Redis Hold → Create Booking → Postgres(pending)
  
 ---
  
-## 9. Open Questions — Pick 2–3 Next, Don't Chase All
+## 9. My Questions
  
 1. **Redis TTL vs. booking expiry** — is there really a mismatch, and what does it mean?
 2. **Expired-but-unswept booking payable?** — is this actually exploitable?
