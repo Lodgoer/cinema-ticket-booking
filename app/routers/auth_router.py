@@ -26,7 +26,7 @@ async def register(data: UserCreate, session: AsyncSession = Depends(get_session
         name=data.name,
         email=data.email,
         password_hash=hash_password(data.password),
-        role=data.role,
+        role="customer",
     )
     return user
 

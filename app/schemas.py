@@ -141,7 +141,7 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
-    role: str = "customer"  # customer / theater_manager / admin
+    #role: str = "customer"  # customer / theater_manager / admin
 
 
 class UserRead(BaseModel):
