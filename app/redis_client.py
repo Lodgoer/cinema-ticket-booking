@@ -14,3 +14,6 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 async def get_redis() -> redis.Redis:
     return redis_client
+
+def hold_key(showtime_id: int, seat_id: int) -> str:
+    return f"seat_hold:{showtime_id}:{seat_id}"

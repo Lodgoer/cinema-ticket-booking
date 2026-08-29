@@ -17,16 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_session
 from app.models import AppUser, ShowtimeSeat
-from app.redis_client import get_redis
+from app.redis_client import get_redis, hold_key
 from app.services.waiting_room import is_admitted, waiting_room_key
 
 hold_router = APIRouter(prefix="/showtimes/{showtime_id}", tags=["seat-hold"])
 
 HOLD_TTL_SECONDS = 600  # 10 minutes
-
-
-def hold_key(showtime_id: int, seat_id: int) -> str:
-    return f"seat_hold:{showtime_id}:{seat_id}"
 
 
 @hold_router.post("/seats/{seat_id}/hold", status_code=status.HTTP_200_OK)

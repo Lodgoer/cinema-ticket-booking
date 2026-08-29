@@ -2,7 +2,7 @@
 Booking service — the core business logic that ties holds, bookings,
 payments, and tickets together.
 
-Design notes (for interview defense):
+Design notes:
 - create_booking: converts Redis-held seats into a pending booking in Postgres.
   The transaction inserts booking_seat rows and flips showtime_seat status to
   'booked' atomically. If two users race on the same seat, the partial unique
@@ -23,15 +23,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from redis.asyncio import Redis
+
 from app.models import (
     Booking, BookingSeat, ShowtimeSeat, Ticket, Payment,
 )
+
+from app.redis_client import hold_key
 
 BOOKING_HOLD_MINUTES = 10  # matches Redis TTL
 
 
 async def create_booking(
     session: AsyncSession,
+    r: Redis,
     user_id: int,
     showtime_id: int,
     seat_ids: list[int],
@@ -69,6 +74,19 @@ async def create_booking(
     if already_booked:
         booked_ids = [ss.seat_id for ss in already_booked]
         raise ValueError(f"Seats already booked: {booked_ids}")
+
+    # Check the caller actually holds every request seat in Redis.
+    # Whitput this, /booking could be called directly, skipping the
+    # hold step (and the waiting room gate that sits in front of it).
+    not_held = []
+    for seat_id in seat_ids:
+        held_by = await r.get(hold_key(showtime_id, seat_id))
+        if held_by != str(user_id):
+            not_held.append(seat_id)
+    if not_held:
+        raise ValueError(
+            f"You don't hold these seats (hold missing or expired): {not_held}"
+        )
 
     # Calculate total price from price_snapshots
     total_price = sum(ss.price_snapshot for ss in showtime_seats)

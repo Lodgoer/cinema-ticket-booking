@@ -11,9 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from redis.asyncio import Redis
+
 from app.auth import get_current_user
 from app.database import get_session, async_session
 from app.models import AppUser, Booking, BookingSeat, Ticket, Payment
+from app.redis_client import get_redis
+
 from app.schemas import BookingCreate, BookingRead, PaymentCreate, PaymentRead, TicketRead
 from app.services.booking_service import create_booking, cancel_booking, confirm_payment
 from app.services.payment_provider import FakePaymentProvider
@@ -30,6 +34,7 @@ async def create_booking_endpoint(
     data: BookingCreate,
     user: AppUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+    r: Redis = Depends(get_redis)
 ):
     """Convert held seats into a pending booking.
 
@@ -39,6 +44,7 @@ async def create_booking_endpoint(
     try:
         booking = await create_booking(
             session=session,
+            r=r,
             user_id=user.id,
             showtime_id=data.showtime_id,
             seat_ids=data.seat_ids,
