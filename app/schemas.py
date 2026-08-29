@@ -7,6 +7,7 @@ request never provides.
 """
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
@@ -141,8 +142,9 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
-    #role: str = "customer"  # customer / theater_manager / admin
 
+class UserRoleUpdate(BaseModel):
+    role: Literal["customer", "theater_manager", "admin"]
 
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
