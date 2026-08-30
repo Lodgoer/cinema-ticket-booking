@@ -13,8 +13,7 @@ from app.authorization import (
     require_cinema_owner, check_cinema_access,
     require_hall_owner, require_seat_owner, require_showtime_owner,
 )
-from app.models import AppUser, Hall, Seat, Showtime
-from app.models import Showtime, ShowtimeSeat
+from app.models import AppUser, Hall, Seat, Showtime, ShowtimeSeat
 from app.repositories import (
     CinemaRepository, HallRepository, SeatTypeRepository,
     SeatRepository, MovieRepository, ShowtimeRepository,
@@ -87,6 +86,7 @@ async def delete_cinema(
         raise HTTPException(status_code=404, detail="Cinema not found")
     await repo.delete(cinema)
 
+
 # ---------- Hall ----------
 
 @router.post("/halls", response_model=HallRead, status_code=status.HTTP_201_CREATED)
@@ -98,6 +98,7 @@ async def create_hall(
     await check_cinema_access(user, data.cinema_id, session)
     return await HallRepository(session).create(**data.model_dump())
 
+
 @router.get(
     "/cinemas/{cinema_id}/halls",
     response_model=list[HallRead],
@@ -105,6 +106,7 @@ async def create_hall(
 )
 async def list_halls_for_cinema(cinema_id: int, session: AsyncSession = Depends(get_session)):
     return await HallRepository(session).get_by_cinema(cinema_id)
+
 
 @router.get("/halls/{hall_id}", response_model=HallRead)
 async def get_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
@@ -134,8 +136,14 @@ async def delete_hall(
 
 
 # ---------- Seat type ----------
+# Global catalog (not tied to a specific cinema) — admin only, not theater_manager.
 
-@router.post("/seat-types", response_model=SeatTypeRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/seat-types",
+    response_model=SeatTypeRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def create_seat_type(data: SeatTypeCreate, session: AsyncSession = Depends(get_session)):
     return await SeatTypeRepository(session).create(**data.model_dump())
 
@@ -159,6 +167,7 @@ async def create_seat(
     await check_cinema_access(user, hall.cinema_id, session)
     return await SeatRepository(session).create(**data.model_dump())
 
+
 @router.get("/halls/{hall_id}/seats", response_model=list[SeatRead])
 async def list_seats_for_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
     return await SeatRepository(session).get_by_hall(hall_id)
@@ -173,8 +182,14 @@ async def delete_seat(
 
 
 # ---------- Movie ----------
+# Global catalog (a movie can play at many cinemas) — admin only, not theater_manager.
 
-@router.post("/movies", response_model=MovieRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/movies",
+    response_model=MovieRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def create_movie(data: MovieCreate, session: AsyncSession = Depends(get_session)):
     return await MovieRepository(session).create(**data.model_dump())
 
@@ -192,7 +207,11 @@ async def get_movie(movie_id: int, session: AsyncSession = Depends(get_session))
     return movie
 
 
-@router.patch("/movies/{movie_id}", response_model=MovieRead)
+@router.patch(
+    "/movies/{movie_id}",
+    response_model=MovieRead,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def update_movie(movie_id: int, data: MovieUpdate, session: AsyncSession = Depends(get_session)):
     repo = MovieRepository(session)
     movie = await repo.get(movie_id)
@@ -201,7 +220,11 @@ async def update_movie(movie_id: int, data: MovieUpdate, session: AsyncSession =
     return await repo.update(movie, **data.model_dump())
 
 
-@router.delete("/movies/{movie_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/movies/{movie_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
 async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_session)):
     repo = MovieRepository(session)
     movie = await repo.get(movie_id)
@@ -226,6 +249,7 @@ async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_sessio
 # 2. Seat map generation: the moment a showtime is created, we create one
 #    ShowtimeSeat row per physical Seat in that hall, all starting out
 #    'available'. This is what makes the showtime immediately bookable.
+
 @router.post("/showtimes", response_model=ShowtimeRead, status_code=status.HTTP_201_CREATED)
 async def create_showtime(
     data: ShowtimeCreate,
@@ -238,6 +262,42 @@ async def create_showtime(
     await check_cinema_access(user, hall.cinema_id, session)
 
     showtime_repo = ShowtimeRepository(session)
+    seat_repo = SeatRepository(session)
+
+    showtime = Showtime(**data.model_dump())
+    session.add(showtime)
+    try:
+        await session.flush()  # sends the INSERT so the exclusion constraint
+                                # gets checked now, without committing yet
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This hall already has an overlapping showtime at that time.",
+        )
+
+    seats = await seat_repo.get_by_hall(data.hall_id)
+    seat_type_repo = SeatTypeRepository(session)
+    seat_type_prices: dict[int, object] = {}
+
+    for seat in seats:
+        if seat.seat_type_id not in seat_type_prices:
+            seat_type = await seat_type_repo.get(seat.seat_type_id)
+            seat_type_prices[seat.seat_type_id] = seat_type.price
+
+        session.add(
+            ShowtimeSeat(
+                showtime_id=showtime.id,
+                seat_id=seat.id,
+                status="available",
+                price_snapshot=seat_type_prices[seat.seat_type_id],
+            )
+        )
+
+    await session.commit()
+    await session.refresh(showtime)
+    return showtime
+
 
 @router.get("/showtimes", response_model=list[ShowtimeRead])
 async def list_showtimes(session: AsyncSession = Depends(get_session)):
@@ -258,32 +318,3 @@ async def delete_showtime(
     session: AsyncSession = Depends(get_session),
 ):
     await ShowtimeRepository(session).delete(showtime)
-
-@router.post(
-    "/seat-types", response_model=SeatTypeRead, status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_role("admin"))],
-)
-async def create_seat_type(data: SeatTypeCreate, session: AsyncSession = Depends(get_session)):
-    return await SeatTypeRepository(session).create(**data.model_dump())
-
-@router.post(
-    "/movies", response_model=MovieRead, status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_role("admin"))],
-)
-async def create_movie(data: MovieCreate, session: AsyncSession = Depends(get_session)):
-    return await MovieRepository(session).create(**data.model_dump())
-
-
-    @router.patch(
-    "/movies/{movie_id}", response_model=MovieRead,
-    dependencies=[Depends(require_role("admin"))],
-)
-async def update_movie(movie_id: int, data: MovieUpdate, session: AsyncSession = Depends(get_session)):
-    ...    
-
-    @router.delete(
-    "/movies/{movie_id}", status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_role("admin"))],
-)
-async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_session)):
-    ...
