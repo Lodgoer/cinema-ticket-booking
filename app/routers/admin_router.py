@@ -8,7 +8,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.auth import require_role
+from app.auth import require_role, get_current_user
+from app.authorization import (
+    require_cinema_owner, check_cinema_access,
+    require_hall_owner, require_seat_owner, require_showtime_owner,
+)
+from app.models import AppUser, Hall, Seat, Showtime
 from app.models import Showtime, ShowtimeSeat
 from app.repositories import (
     CinemaRepository, HallRepository, SeatTypeRepository,
@@ -50,8 +55,16 @@ async def get_cinema(cinema_id: int, session: AsyncSession = Depends(get_session
     return cinema
 
 
-@router.patch("/cinemas/{cinema_id}", response_model=CinemaRead)
-async def update_cinema(cinema_id: int, data: CinemaUpdate, session: AsyncSession = Depends(get_session)):
+@router.patch(
+    "/cinemas/{cinema_id}",
+    response_model=CinemaRead,
+    dependencies=[Depends(require_cinema_owner)],
+)
+async def update_cinema(
+    cinema_id: int,
+    data: CinemaUpdate,
+    session: AsyncSession = Depends(get_session),
+):
     repo = CinemaRepository(session)
     cinema = await repo.get(cinema_id)
     if cinema is None:
@@ -59,26 +72,39 @@ async def update_cinema(cinema_id: int, data: CinemaUpdate, session: AsyncSessio
     return await repo.update(cinema, **data.model_dump())
 
 
-@router.delete("/cinemas/{cinema_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_cinema(cinema_id: int, session: AsyncSession = Depends(get_session)):
+@router.delete(
+    "/cinemas/{cinema_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_cinema_owner)],
+)
+async def delete_cinema(
+    cinema_id: int,
+    session: AsyncSession = Depends(get_session),
+):
     repo = CinemaRepository(session)
     cinema = await repo.get(cinema_id)
     if cinema is None:
         raise HTTPException(status_code=404, detail="Cinema not found")
     await repo.delete(cinema)
 
-
 # ---------- Hall ----------
 
 @router.post("/halls", response_model=HallRead, status_code=status.HTTP_201_CREATED)
-async def create_hall(data: HallCreate, session: AsyncSession = Depends(get_session)):
+async def create_hall(
+    data: HallCreate,
+    session: AsyncSession = Depends(get_session),
+    user: AppUser = Depends(get_current_user),
+):
+    await check_cinema_access(user, data.cinema_id, session)
     return await HallRepository(session).create(**data.model_dump())
 
-
-@router.get("/cinemas/{cinema_id}/halls", response_model=list[HallRead])
+@router.get(
+    "/cinemas/{cinema_id}/halls",
+    response_model=list[HallRead],
+    dependencies=[Depends(require_cinema_owner)],
+)
 async def list_halls_for_cinema(cinema_id: int, session: AsyncSession = Depends(get_session)):
     return await HallRepository(session).get_by_cinema(cinema_id)
-
 
 @router.get("/halls/{hall_id}", response_model=HallRead)
 async def get_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
@@ -89,20 +115,21 @@ async def get_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
 
 
 @router.patch("/halls/{hall_id}", response_model=HallRead)
-async def update_hall(hall_id: int, data: HallUpdate, session: AsyncSession = Depends(get_session)):
+async def update_hall(
+    data: HallUpdate,
+    hall: Hall = Depends(require_hall_owner),
+    session: AsyncSession = Depends(get_session),
+):
     repo = HallRepository(session)
-    hall = await repo.get(hall_id)
-    if hall is None:
-        raise HTTPException(status_code=404, detail="Hall not found")
     return await repo.update(hall, **data.model_dump())
 
 
 @router.delete("/halls/{hall_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
+async def delete_hall(
+    hall: Hall = Depends(require_hall_owner),
+    session: AsyncSession = Depends(get_session),
+):
     repo = HallRepository(session)
-    hall = await repo.get(hall_id)
-    if hall is None:
-        raise HTTPException(status_code=404, detail="Hall not found")
     await repo.delete(hall)
 
 
@@ -121,9 +148,16 @@ async def list_seat_types(session: AsyncSession = Depends(get_session)):
 # ---------- Seat (physical layout of a hall) ----------
 
 @router.post("/seats", response_model=SeatRead, status_code=status.HTTP_201_CREATED)
-async def create_seat(data: SeatCreate, session: AsyncSession = Depends(get_session)):
+async def create_seat(
+    data: SeatCreate,
+    session: AsyncSession = Depends(get_session),
+    user: AppUser = Depends(get_current_user),
+):
+    hall = await HallRepository(session).get(data.hall_id)
+    if hall is None:
+        raise HTTPException(status_code=404, detail="Hall not found")
+    await check_cinema_access(user, hall.cinema_id, session)
     return await SeatRepository(session).create(**data.model_dump())
-
 
 @router.get("/halls/{hall_id}/seats", response_model=list[SeatRead])
 async def list_seats_for_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
@@ -131,12 +165,11 @@ async def list_seats_for_hall(hall_id: int, session: AsyncSession = Depends(get_
 
 
 @router.delete("/seats/{seat_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_seat(seat_id: int, session: AsyncSession = Depends(get_session)):
-    repo = SeatRepository(session)
-    seat = await repo.get(seat_id)
-    if seat is None:
-        raise HTTPException(status_code=404, detail="Seat not found")
-    await repo.delete(seat)
+async def delete_seat(
+    seat: Seat = Depends(require_seat_owner),
+    session: AsyncSession = Depends(get_session),
+):
+    await SeatRepository(session).delete(seat)
 
 
 # ---------- Movie ----------
@@ -193,46 +226,18 @@ async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_sessio
 # 2. Seat map generation: the moment a showtime is created, we create one
 #    ShowtimeSeat row per physical Seat in that hall, all starting out
 #    'available'. This is what makes the showtime immediately bookable.
-
 @router.post("/showtimes", response_model=ShowtimeRead, status_code=status.HTTP_201_CREATED)
-async def create_showtime(data: ShowtimeCreate, session: AsyncSession = Depends(get_session)):
+async def create_showtime(
+    data: ShowtimeCreate,
+    session: AsyncSession = Depends(get_session),
+    user: AppUser = Depends(get_current_user),
+):
+    hall = await HallRepository(session).get(data.hall_id)
+    if hall is None:
+        raise HTTPException(status_code=404, detail="Hall not found")
+    await check_cinema_access(user, hall.cinema_id, session)
+
     showtime_repo = ShowtimeRepository(session)
-    seat_repo = SeatRepository(session)
-
-    showtime = Showtime(**data.model_dump())
-    session.add(showtime)
-    try:
-        await session.flush()  # sends the INSERT so the exclusion constraint
-                                # gets checked now, without committing yet
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This hall already has an overlapping showtime at that time.",
-        )
-
-    seats = await seat_repo.get_by_hall(data.hall_id)
-    seat_type_repo = SeatTypeRepository(session)
-    seat_type_prices: dict[int, object] = {}
-
-    for seat in seats:
-        if seat.seat_type_id not in seat_type_prices:
-            seat_type = await seat_type_repo.get(seat.seat_type_id)
-            seat_type_prices[seat.seat_type_id] = seat_type.price
-
-        session.add(
-            ShowtimeSeat(
-                showtime_id=showtime.id,
-                seat_id=seat.id,
-                status="available",
-                price_snapshot=seat_type_prices[seat.seat_type_id],
-            )
-        )
-
-    await session.commit()
-    await session.refresh(showtime)
-    return showtime
-
 
 @router.get("/showtimes", response_model=list[ShowtimeRead])
 async def list_showtimes(session: AsyncSession = Depends(get_session)):
@@ -248,9 +253,37 @@ async def get_showtime(showtime_id: int, session: AsyncSession = Depends(get_ses
 
 
 @router.delete("/showtimes/{showtime_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_showtime(showtime_id: int, session: AsyncSession = Depends(get_session)):
-    repo = ShowtimeRepository(session)
-    showtime = await repo.get(showtime_id)
-    if showtime is None:
-        raise HTTPException(status_code=404, detail="Showtime not found")
-    await repo.delete(showtime)
+async def delete_showtime(
+    showtime: Showtime = Depends(require_showtime_owner),
+    session: AsyncSession = Depends(get_session),
+):
+    await ShowtimeRepository(session).delete(showtime)
+
+@router.post(
+    "/seat-types", response_model=SeatTypeRead, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_seat_type(data: SeatTypeCreate, session: AsyncSession = Depends(get_session)):
+    return await SeatTypeRepository(session).create(**data.model_dump())
+
+@router.post(
+    "/movies", response_model=MovieRead, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def create_movie(data: MovieCreate, session: AsyncSession = Depends(get_session)):
+    return await MovieRepository(session).create(**data.model_dump())
+
+
+    @router.patch(
+    "/movies/{movie_id}", response_model=MovieRead,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def update_movie(movie_id: int, data: MovieUpdate, session: AsyncSession = Depends(get_session)):
+    ...    
+
+    @router.delete(
+    "/movies/{movie_id}", status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("admin"))],
+)
+async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_session)):
+    ...
