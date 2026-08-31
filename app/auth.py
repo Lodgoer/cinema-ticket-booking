@@ -19,11 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import AppUser
+from app.settings import settings
 
 # In a real deployment this must come from an environment variable, never
 # hardcoded — flagged here as a TODO for when .env / pydantic-settings gets
 # wired in properly.
-SECRET_KEY = "dev-secret-change-me"
+
+SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

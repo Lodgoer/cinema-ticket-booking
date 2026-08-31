@@ -3,10 +3,9 @@ from sqlalchemy import BigInteger, DateTime
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "postgresql+asyncpg://postgres:mysecret@localhost:5432/cinema_db"
+from app.settings import settings
 
-engine = create_async_engine(DATABASE_URL, echo=True)
-
+engine = create_async_engine(settings.database_url, echo=True)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
