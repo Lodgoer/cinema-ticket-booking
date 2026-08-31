@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 
     database_url: str
     secret_key: str
+    enviroment: str = "development"
+
+    @property
+    def is_production(self) -> bool:
+        return self.enviroment == "production"
 
 
 settings = Settings()
