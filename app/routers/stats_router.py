@@ -17,7 +17,7 @@ from app.auth import require_role
 from app.database import get_session
 from app.models import (
     AppUser, CinemaManager, Cinema, Hall, Seat,
-    Showtime, ShowtimeSeat, Booking, BookingSeat, Payment, Movie,
+    Showtime, ShowtimeSeat, Booking, BookingSeat, Ticket, Payment, Movie,
 )
 
 stats_router = APIRouter(
@@ -68,7 +68,7 @@ async def sales_by_movie(
             Movie.id.label("movie_id"),
             Movie.title.label("movie_title"),
             func.count(Ticket.id).label("tickets_sold"),
-            func.coalesce(func.sum(Booking.total_price), 0).label("total_revenue"),
+            func.coalesce(func.sum(ShowtimeSeat.price_snapshot), 0).label("total_revenue"),
         )
         .join(Showtime, Showtime.movie_id == Movie.id)
         .join(Hall, Hall.id == Showtime.hall_id)
@@ -114,7 +114,7 @@ async def sales_by_cinema(
             Cinema.id.label("cinema_id"),
             Cinema.name.label("cinema_name"),
             func.count(Ticket.id).label("tickets_sold"),
-            func.coalesce(func.sum(Booking.total_price), 0).label("total_revenue"),
+            func.coalesce(func.sum(ShowtimeSeat.price_snapshot), 0).label("total_revenue"),
         )
         .join(Hall, Hall.cinema_id == Cinema.id)
         .join(Showtime, Showtime.hall_id == Hall.id)
@@ -163,7 +163,7 @@ async def sales_by_showtime(
             Cinema.name.label("cinema_name"),
             Hall.name.label("hall_name"),
             func.count(Ticket.id).label("tickets_sold"),
-            func.coalesce(func.sum(Booking.total_price), 0).label("total_revenue"),
+            func.coalesce(func.sum(ShowtimeSeat.price_snapshot), 0).label("total_revenue"),
         )
         .join(Movie, Movie.id == Showtime.movie_id)
         .join(Hall, Hall.id == Showtime.hall_id)
@@ -214,7 +214,7 @@ async def revenue_over_time(
         select(
             func.date(Booking.created_at).label("date"),
             func.count(Ticket.id).label("tickets_sold"),
-            func.coalesce(func.sum(Booking.total_price), 0).label("daily_revenue"),
+            func.coalesce(func.sum(ShowtimeSeat.price_snapshot), 0).label("daily_revenue"),
         )
         .join(BookingSeat, BookingSeat.booking_id == Booking.id)
         .join(Ticket, Ticket.booking_seat_id == BookingSeat.id)
