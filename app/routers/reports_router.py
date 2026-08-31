@@ -162,7 +162,7 @@ async def popular_showtimes(
                 st.starts_at,
                 c.name AS cinema_name,
                 COUNT(t.id) AS tickets_sold,
-                SUM(b.total_price) AS revenue
+                SUM(ss.price_snapshot) AS revenue
             FROM showtime st
             JOIN movie m ON m.id = st.movie_id
             JOIN hall h ON h.id = st.hall_id
@@ -187,7 +187,7 @@ async def popular_showtimes(
                 st.starts_at,
                 c.name AS cinema_name,
                 COUNT(t.id) AS tickets_sold,
-                SUM(b.total_price) AS revenue
+                SUM(ss.price_snapshot) AS revenue
             FROM showtime st
             JOIN movie m ON m.id = st.movie_id
             JOIN hall h ON h.id = st.hall_id
