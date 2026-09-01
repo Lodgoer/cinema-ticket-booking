@@ -25,7 +25,8 @@ from redis.asyncio import Redis
 BATCH_SIZE = 10          # users admitted per batch
 ADMISSION_INTERVAL = 5   # seconds between admission batches
 WAITING_ROOM_TOKEN_TTL_SECONDS = 120  # 2 minutes — just long enough to hold a seat
-
+ADMITTED_SET_TTL_SECONDS = 1800  # 30 minutes — refreshed on every admit, so it only
+                                  # expires once admissions for this showtime go quiet
 
 def waiting_room_key(showtime_id: int) -> str:
     return f"waiting_room:{showtime_id}"
@@ -49,7 +50,7 @@ async def join_waiting_room(r: Redis, showtime_id: int, user_id: int) -> dict:
     now = datetime.now(timezone.utc).timestamp()
 
     # ZADD NX: only add if not already present (returns 0 for existing members)
-    await r.zadd(key, {str(user_id): now})
+    await r.zadd(key, {str(user_id): now}, nx=True)
 
     # Get position (1-indexed)
     position = await r.zrank(key, str(user_id))
@@ -103,6 +104,7 @@ async def admit_batch(r: Redis, showtime_id: int, batch_size: int | None = None)
         await r.set(token_key(showtime_id, user_id), "1", ex=token_ttl)
         # Track in the admitted set (for visibility)
         await r.sadd(admitted_key(showtime_id), str(user_id))
+        await r.expire(admitted_key(showtime_id), ADMITTED_SET_TTL_SECONDS)
         admitted_users.append(user_id)
 
     return admitted_users
