@@ -15,14 +15,15 @@ this scale; in production, lazy check or event-driven expiry would be preferred.
 """
 import asyncio
 from datetime import datetime, timezone
-
 from sqlalchemy import select, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 from app.database import async_session
 from app.models import Booking, BookingSeat, ShowtimeSeat
 from app.redis_client import redis_client
+from app.services.booking_service import (
+    sweep_expired_bookings as sweep_expired_bookings_service,
+)
 from app.services.waiting_room import (
     waiting_room_key,
     admit_batch,
@@ -30,56 +31,39 @@ from app.services.waiting_room import (
     ADMISSION_INTERVAL,
 )
 
+# arq worker settings
+from arq import cron
+
+def every_n_seconds(n: int) -> dict:
+    """
+    Build cron() kwargs that approximate "run every n seconds".
+
+    arq's cron() is clock-based (like a crontab line), not interval-based —
+    it wants specific second/minute marks, not a gap between runs. This
+    translates a plain "every N seconds" into the set of clock marks that
+    produces that cadence.
+    """
+    if n < 60:
+        if 60 % n != 0:
+            raise ValueError(f"{n} must evenly divide 60")
+        return {"second": set(range(0, 60, n))}
+    elif n % 60 == 0:
+        minutes = n // 60
+        if 60 % minutes != 0:
+            raise ValueError(f"{minutes} must evenly divide 60")
+        return {"minute": set(range(0, 60, minutes)), "second": 0}
+    else:
+        raise ValueError(f"{n} seconds isn't expressible as a simple cron interval")
+
 async def sweep_expired_bookings(ctx) -> int:
     """Cancel bookings past their expires_at, releasing seats.
 
-    Returns the number of bookings cancelled.
+    Thin arq wrapper: opens a session and delegates the actual logic to
+    booking_service.sweep_expired_bookings, so this stays the single
+    source of truth instead of two copies drifting apart.
     """
     async with async_session() as session:
-        now = datetime.now(timezone.utc)
-
-        # Find expired pending bookings
-        result = await session.execute(
-            select(Booking).where(
-                Booking.status == "pending",
-                Booking.expires_at < now,
-            )
-        )
-        expired = list(result.scalars().all())
-
-        if not expired:
-            return 0
-
-        for booking in expired:
-            # Deactivate booking seats
-            await session.execute(
-                update(BookingSeat)
-                .where(
-                    BookingSeat.booking_id == booking.id,
-                    BookingSeat.status == "active",
-                )
-                .values(status="cancelled")
-            )
-
-            # Release showtime seats back to available
-            await session.execute(
-                update(ShowtimeSeat)
-                .where(
-                    ShowtimeSeat.id.in_(
-                        select(BookingSeat.showtime_seat_id).where(
-                            BookingSeat.booking_id == booking.id,
-                            BookingSeat.status == "cancelled",
-                        )
-                    )
-                )
-                .values(status="available")
-            )
-
-            booking.status = "expired"
-
-        await session.commit()
-        return len(expired)
-
+        return await sweep_expired_bookings_service(session)
 
 async def sweep_waiting_room(ctx) -> int:
     """Admit the next batch of users from all active waiting rooms.
@@ -121,16 +105,12 @@ async def startup(ctx):
     """Runs once when the worker starts."""
     ctx["started_at"] = datetime.now(timezone.utc).isoformat()
 
-
-# arq worker settings
-from arq import cron
-
 class WorkerSettings:
     functions = [sweep_expired_bookings, sweep_waiting_room, refresh_occupancy_view]
     cron_jobs = [
-        cron(sweep_expired_bookings),  # runs every minute (default)
-        cron(sweep_waiting_room, interval=ADMISSION_INTERVAL),  # admit batches every N seconds
-        cron(refresh_occupancy_view, interval=300),  # refresh materialized view every 5 minutes
+        cron(sweep_expired_bookings),  # runs every minute (default: second=0)
+        cron(sweep_waiting_room, **every_n_seconds(ADMISSION_INTERVAL)),
+        cron(refresh_occupancy_view, **every_n_seconds(300)),
     ]
     on_startup = startup
     max_jobs = 4
