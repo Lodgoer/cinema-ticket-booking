@@ -14,6 +14,7 @@ All other reports use regular aggregate queries because:
 Access rules are the same as stats_router — admin sees all, theater_manager
 sees only their cinemas.
 """
+from app.authorization import get_managed_cinema_ids
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,24 +31,6 @@ reports_router = APIRouter(
     tags=["reports"],
     dependencies=[Depends(require_role("admin", "theater_manager"))],
 )
-
-
-async def get_managed_cinema_ids(
-    session: AsyncSession,
-    user: AppUser,
-) -> list[int] | None:
-    """Return the cinema IDs managed by this user.
-
-    Returns None for admins (meaning: no filter, see everything).
-    Returns a list of cinema IDs for theater_managers.
-    """
-    if user.role == "admin":
-        return None
-
-    result = await session.execute(
-        select(CinemaManager.cinema_id).where(CinemaManager.user_id == user.id)
-    )
-    return [row[0] for row in result.all()]
 
 
 @reports_router.get("/occupancy-rate")

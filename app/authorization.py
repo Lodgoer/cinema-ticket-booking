@@ -109,3 +109,20 @@ async def require_showtime_owner(
     cinema_id = await _cinema_id_for_hall(showtime.hall_id, session)
     await check_cinema_access(user, cinema_id, session)
     return showtime
+
+async def get_managed_cinema_ids(
+    session: AsyncSession,
+    user: AppUser,
+) -> list[int] | None:
+    """Return the cinema IDs managed by this user.
+
+    Returns None for admins (meaning: no filter, see everything).
+    Returns a list of cinema IDs for theater_managers.
+    """
+    if user.role == "admin":
+        return None
+
+    result = await session.execute(
+        select(CinemaManager.cinema_id).where(CinemaManager.user_id == user.id)
+    )
+    return [row[0] for row in result.all()]

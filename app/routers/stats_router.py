@@ -9,6 +9,7 @@ Access rules:
 All queries are aggregate SQL — no materialized views except for
 occupancy_rate (which is in reports_router.py).
 """
+from app.authorization import get_managed_cinema_ids
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func, case, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,24 +26,6 @@ stats_router = APIRouter(
     tags=["statistics"],
     dependencies=[Depends(require_role("admin", "theater_manager"))],
 )
-
-
-async def get_managed_cinema_ids(
-    session: AsyncSession,
-    user: AppUser,
-) -> list[int] | None:
-    """Return the cinema IDs managed by this user.
-
-    Returns None for admins (meaning: no filter, see everything).
-    Returns a list of cinema IDs for theater_managers.
-    """
-    if user.role == "admin":
-        return None  # no filter
-
-    result = await session.execute(
-        select(CinemaManager.cinema_id).where(CinemaManager.user_id == user.id)
-    )
-    return [row[0] for row in result.all()]
 
 
 def cinema_filter_clause(cinema_ids: list[int] | None):
