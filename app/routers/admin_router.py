@@ -38,8 +38,9 @@ router = APIRouter(
 
 @router.post("/cinemas", response_model=CinemaRead, status_code=status.HTTP_201_CREATED)
 async def create_cinema(data: CinemaCreate, session: AsyncSession = Depends(get_session)):
-    return await CinemaRepository(session).create(**data.model_dump())
-
+    cinema = await CinemaRepository(session).create(**data.model_dump())
+    await session.commit()
+    return cinema
 
 @router.get("/cinemas", response_model=list[CinemaRead])
 async def list_cinemas(session: AsyncSession = Depends(get_session)):
@@ -68,8 +69,9 @@ async def update_cinema(
     cinema = await repo.get(cinema_id)
     if cinema is None:
         raise HTTPException(status_code=404, detail="Cinema not found")
-    return await repo.update(cinema, **data.model_dump())
-
+    cinema = await repo.update(cinema, **data.model_dump())
+    await session.commit()
+    return cinema
 
 @router.delete(
     "/cinemas/{cinema_id}",
@@ -85,6 +87,7 @@ async def delete_cinema(
     if cinema is None:
         raise HTTPException(status_code=404, detail="Cinema not found")
     await repo.delete(cinema)
+    await session.commit()
 
 
 # ---------- Hall ----------
@@ -96,8 +99,9 @@ async def create_hall(
     user: AppUser = Depends(get_current_user),
 ):
     await check_cinema_access(user, data.cinema_id, session)
-    return await HallRepository(session).create(**data.model_dump())
-
+    hall = await HallRepository(session).create(**data.model_dump())
+    await session.commit()
+    return hall
 
 @router.get(
     "/cinemas/{cinema_id}/halls",
@@ -123,8 +127,9 @@ async def update_hall(
     session: AsyncSession = Depends(get_session),
 ):
     repo = HallRepository(session)
-    return await repo.update(hall, **data.model_dump())
-
+    hall = await repo.update(hall, **data.model_dump())
+    await session.commit()
+    return hall
 
 @router.delete("/halls/{hall_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_hall(
@@ -133,7 +138,7 @@ async def delete_hall(
 ):
     repo = HallRepository(session)
     await repo.delete(hall)
-
+    await session.commit()
 
 # ---------- Seat type ----------
 # Global catalog (not tied to a specific cinema) — admin only, not theater_manager.
@@ -145,8 +150,9 @@ async def delete_hall(
     dependencies=[Depends(require_role("admin"))],
 )
 async def create_seat_type(data: SeatTypeCreate, session: AsyncSession = Depends(get_session)):
-    return await SeatTypeRepository(session).create(**data.model_dump())
-
+    seat_type = await SeatTypeRepository(session).create(**data.model_dump())
+    await session.commit()
+    return seat_type
 
 @router.get("/seat-types", response_model=list[SeatTypeRead])
 async def list_seat_types(session: AsyncSession = Depends(get_session)):
@@ -165,8 +171,9 @@ async def create_seat(
     if hall is None:
         raise HTTPException(status_code=404, detail="Hall not found")
     await check_cinema_access(user, hall.cinema_id, session)
-    return await SeatRepository(session).create(**data.model_dump())
-
+    seat = await SeatRepository(session).create(**data.model_dump())
+    await session.commit()
+    return seat
 
 @router.get("/halls/{hall_id}/seats", response_model=list[SeatRead])
 async def list_seats_for_hall(hall_id: int, session: AsyncSession = Depends(get_session)):
@@ -178,8 +185,9 @@ async def delete_seat(
     seat: Seat = Depends(require_seat_owner),
     session: AsyncSession = Depends(get_session),
 ):
-    await SeatRepository(session).delete(seat)
-
+    repo = SeatRepository(session)
+    await repo.delete(seat)
+    await session.commit()
 
 # ---------- Movie ----------
 # Global catalog (a movie can play at many cinemas) — admin only, not theater_manager.
@@ -191,8 +199,9 @@ async def delete_seat(
     dependencies=[Depends(require_role("admin"))],
 )
 async def create_movie(data: MovieCreate, session: AsyncSession = Depends(get_session)):
-    return await MovieRepository(session).create(**data.model_dump())
-
+    movie = await MovieRepository(session).create(**data.model_dump())
+    await session.commit()
+    return movie
 
 @router.get("/movies", response_model=list[MovieRead])
 async def list_movies(session: AsyncSession = Depends(get_session)):
@@ -217,8 +226,9 @@ async def update_movie(movie_id: int, data: MovieUpdate, session: AsyncSession =
     movie = await repo.get(movie_id)
     if movie is None:
         raise HTTPException(status_code=404, detail="Movie not found")
-    return await repo.update(movie, **data.model_dump())
-
+    movie = await repo.update(movie, **data.model_dump())
+    await session.commit()
+    return movie
 
 @router.delete(
     "/movies/{movie_id}",
@@ -231,7 +241,7 @@ async def delete_movie(movie_id: int, session: AsyncSession = Depends(get_sessio
     if movie is None:
         raise HTTPException(status_code=404, detail="Movie not found")
     await repo.delete(movie)
-
+    await session.commit()
 
 # ---------- Showtime ----------
 #
@@ -318,3 +328,4 @@ async def delete_showtime(
     session: AsyncSession = Depends(get_session),
 ):
     await ShowtimeRepository(session).delete(showtime)
+    await session.commit()

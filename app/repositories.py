@@ -32,9 +32,13 @@ class BaseRepository(Generic[ModelType]):
         return list(result.scalars().all())
 
     async def create(self, **kwargs) -> ModelType:
+        """Adds and flushes, but does NOT commit — the caller (typically
+        a router endpoint) owns the transaction boundary and must call
+        `await session.commit()` itself. This lets a single request
+        combine multiple repository calls into one atomic transaction."""
         obj = self.model(**kwargs)
         self.session.add(obj)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(obj)
         return obj
 
@@ -42,18 +46,16 @@ class BaseRepository(Generic[ModelType]):
         for key, value in kwargs.items():
             if value is not None:
                 setattr(obj, key, value)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(obj)
         return obj
 
     async def delete(self, obj: ModelType) -> None:
         await self.session.delete(obj)
-        await self.session.commit()
-
+        await self.session.flush()
 
 class CinemaRepository(BaseRepository[Cinema]):
     model = Cinema
-
 
 class HallRepository(BaseRepository[Hall]):
     model = Hall
@@ -64,10 +66,8 @@ class HallRepository(BaseRepository[Hall]):
         )
         return list(result.scalars().all())
 
-
 class SeatTypeRepository(BaseRepository[SeatType]):
     model = SeatType
-
 
 class SeatRepository(BaseRepository[Seat]):
     model = Seat
@@ -78,10 +78,8 @@ class SeatRepository(BaseRepository[Seat]):
         )
         return list(result.scalars().all())
 
-
 class MovieRepository(BaseRepository[Movie]):
     model = Movie
-
 
 class ShowtimeRepository(BaseRepository[Showtime]):
     model = Showtime
@@ -92,7 +90,6 @@ class ShowtimeRepository(BaseRepository[Showtime]):
             select(Showtime).where(Showtime.hall_id == hall_id)
         )
         return list(result.scalars().all())
-
 
 class AppUserRepository(BaseRepository[AppUser]):
     model = AppUser
