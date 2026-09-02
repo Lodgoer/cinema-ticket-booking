@@ -1,7 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
+
 from sqlalchemy import String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import func, text
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
+
 from app.database import Base
 
 
@@ -67,6 +71,18 @@ class Showtime(Base):
     __table_args__ = (
         Index("idx_showtime_hall_start", "hall_id", "starts_at"),
         CheckConstraint("ends_at > starts_at"),
+        # Mirrors the DB-level constraint added by migration
+        # f9b7e2d511fc: two showtimes in the same hall can't have
+        # overlapping time ranges. Declared here too so anyone reading
+        # this model sees the rule, and so Base.metadata.create_all()
+        # (e.g. in tests) creates it as well — not just `alembic upgrade`.
+        # Requires the btree_gist extension (see that migration).
+        ExcludeConstraint(
+            ("hall_id", "="),
+            (func.tstzrange(text("starts_at"), text("ends_at")), "&&"),
+            using="gist",
+            name="no_overlapping_showtimes",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
