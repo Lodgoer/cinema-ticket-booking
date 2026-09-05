@@ -22,12 +22,13 @@ async def register(data: UserCreate, session: AsyncSession = Depends(get_session
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = await repo.create(
+        user = await repo.create(
         name=data.name,
         email=data.email,
         password_hash=hash_password(data.password),
         role="customer",
     )
+    await session.commit()
     return user
 
 
@@ -61,9 +62,11 @@ async def update_user_role(
     data: UserRoleUpdate,
     session: AsyncSession = Depends(get_session),
 ):
-    repo =AppUserRepository(session)
-    user = await repo.get(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        repo =AppUserRepository(session)
+        user = await repo.get(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    return await repo.update(user, role=data.role)
+        user = await repo.update(user, role=data.role)
+        await session.commit()
+        return user
