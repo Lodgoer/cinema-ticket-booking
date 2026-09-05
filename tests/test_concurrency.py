@@ -10,40 +10,48 @@ How to run:
     pytest test_concurrency.py -v
 
 Prerequisites:
-    - Docker containers running (docker compose up -d)
+    - Postgres and Redis reachable at the URLs in .env
     - Database migrated (alembic upgrade head)
-    - Test data seeded (cinema, hall, seats, movie, showtime)
 
-TODO (technical debt — address during code review):
-    Tests use hardcoded showtime_id=1 and seat_id=1 which makes them
-    depend on specific seeded data. Should be refactored to use test
-    fixtures or create isolated test data per run (cinema → hall → seats
-    → movie → showtime) to avoid inter-test coupling and enable parallel
-    execution.
+No live `uvicorn` process or manually-seeded data required — the app
+runs in-process via httpx.ASGITransport, and each test creates its own
+isolated showtime/seats through the seeded_showtime fixture (see
+tests/conftest.py), so tests never depend on specific row IDs and can
+run repeatedly or in any order.
 """
+
 import asyncio
+import uuid
 import pytest
 import httpx
 
-BASE_URL = "http://127.0.0.1:8000"
+from main import app
+
+BASE_URL = "http://test"
 
 
-@pytest.fixture(scope="module")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+def make_client() -> httpx.AsyncClient:
+    """An httpx client wired directly to our FastAPI app via ASGITransport —
+    sends real HTTP requests through real routing/dependency injection,
+    without needing a separately-running `uvicorn main:app` process."""
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL)
 
 
-async def register_and_login(client: httpx.AsyncClient, email: str, password: str) -> str:
-    """Register a user and return their JWT token."""
-    await client.post(f"{BASE_URL}/auth/register", json={
+async def register_and_login(client: httpx.AsyncClient, password: str = "pass123") -> str:
+    """Register a fresh, uniquely-named user and return their JWT token.
+
+    No `role` in the payload — UserCreate no longer accepts one (see the
+    role-escalation fix); every self-registered user is a customer.
+    A fresh uuid-suffixed email avoids the unique-email constraint
+    colliding across repeated test runs.
+    """
+    email = f"user-{uuid.uuid4().hex[:8]}@test.com"
+    await client.post("/auth/register", json={
         "name": email.split("@")[0],
         "email": email,
         "password": password,
-        "role": "customer",
     })
-    resp = await client.post(f"{BASE_URL}/auth/login", data={
+    resp = await client.post("/auth/login", data={
         "username": email,
         "password": password,
     })
@@ -51,7 +59,7 @@ async def register_and_login(client: httpx.AsyncClient, email: str, password: st
 
 
 @pytest.mark.asyncio
-async def test_concurrent_seat_booking():
+async def test_concurrent_seat_booking(seeded_showtime):
     """
     Two users try to hold and book the same seat at the same time.
 
@@ -63,111 +71,73 @@ async def test_concurrent_seat_booking():
     - Layer 1 (Redis): SET NX ensures only one hold at a time
     - Layer 2 (Postgres): partial unique index catches any edge case
     """
-    async with httpx.AsyncClient() as client:
-        # Setup: register two users
-        token_a = await register_and_login(client, "user_a@test.com", "pass123")
-        token_b = await register_and_login(client, "user_b@test.com", "pass123")
+    showtime_id = seeded_showtime["showtime"].id
+    seat_id = seeded_showtime["seats"][0].id
+
+    async with make_client() as client:
+        token_a = await register_and_login(client)
+        token_b = await register_and_login(client)
 
         headers_a = {"Authorization": f"Bearer {token_a}"}
         headers_b = {"Authorization": f"Bearer {token_b}"}
 
-        # Assume showtime_id=1, seat_id=1 exist from prior test data
-        showtime_id = 1
-        seat_id = 1
-
         # Both users try to hold the same seat concurrently
         hold_a, hold_b = await asyncio.gather(
-            client.post(
-                f"{BASE_URL}/showtimes/{showtime_id}/seats/{seat_id}/hold",
-                headers=headers_a,
-            ),
-            client.post(
-                f"{BASE_URL}/showtimes/{showtime_id}/seats/{seat_id}/hold",
-                headers=headers_b,
-            ),
+            client.post(f"/showtimes/{showtime_id}/seats/{seat_id}/hold", headers=headers_a),
+            client.post(f"/showtimes/{showtime_id}/seats/{seat_id}/hold", headers=headers_b),
         )
 
-        # Exactly one should succeed
         results = [hold_a.status_code, hold_b.status_code]
         assert 200 in results, f"Expected one success, got: {results}"
         assert results.count(200) == 1, f"Expected exactly one success, got: {results.count(200)}"
 
-        # The winner creates a booking
-        winner_token = token_a if hold_a.status_code == 200 else token_b
-        winner_headers = {"Authorization": f"Bearer {winner_token}"}
+        winner_headers = headers_a if hold_a.status_code == 200 else headers_b
+        loser_headers = headers_b if hold_a.status_code == 200 else headers_a
 
         booking_resp = await client.post(
-            f"{BASE_URL}/bookings",
-            json={
-                "showtime_id": showtime_id,
-                "seat_ids": [seat_id],
-            },
+            "/bookings",
+            json={"showtime_id": showtime_id, "seat_ids": [seat_id]},
             headers=winner_headers,
         )
         assert booking_resp.status_code == 201, f"Booking failed: {booking_resp.text}"
-        booking = booking_resp.json()
-        assert booking["status"] == "pending"
+        assert booking_resp.json()["status"] == "pending"
 
-        # The loser should fail to book the same seat
-        loser_token = token_b if hold_a.status_code == 200 else token_a
-        loser_headers = {"Authorization": f"Bearer {loser_token}"}
-
-        # Loser tries to book (without a valid hold — should fail)
+        # The loser never holds this seat (User A/B's hold already lost the
+        # race above), so create_booking rejects them — either because the
+        # seat is already 'booked' in Postgres by now, or because they have
+        # no valid Redis hold for it. Either path returns 409/400.
         loser_booking = await client.post(
-            f"{BASE_URL}/bookings",
-            json={
-                "showtime_id": showtime_id,
-                "seat_ids": [seat_id],
-            },
+            "/bookings",
+            json={"showtime_id": showtime_id, "seat_ids": [seat_id]},
             headers=loser_headers,
         )
-        # Should get 409 (seat already booked) or similar error
         assert loser_booking.status_code in (409, 400), \
             f"Expected 409/400 for loser, got: {loser_booking.status_code}"
 
-        print(f"\n{'='*50}")
-        print(f"CONCURRENCY TEST PASSED")
-        print(f"Winner: {winner_token[:20]}... → booking {booking['id']}")
-        print(f"Loser got: {loser_booking.status_code} - {loser_booking.json().get('detail', 'N/A')}")
-        print(f"{'='*50}")
-
 
 @pytest.mark.asyncio
-async def test_cannot_book_already_booked_seat():
-    """
-    After a seat is booked, a second booking attempt fails with 409.
-    """
-    async with httpx.AsyncClient() as client:
-        token = await register_and_login(client, "user_c@test.com", "pass123")
+async def test_cannot_book_already_booked_seat(seeded_showtime):
+    """After a seat is booked, a second hold attempt on it fails with 409."""
+    showtime_id = seeded_showtime["showtime"].id
+    seat_id = seeded_showtime["seats"][1].id  # a different seat from the test above
+
+    async with make_client() as client:
+        token = await register_and_login(client)
         headers = {"Authorization": f"Bearer {token}"}
 
-        showtime_id = 1
-        seat_id = 2  # assume this seat exists
+        hold_resp = await client.post(f"/showtimes/{showtime_id}/seats/{seat_id}/hold", headers=headers)
+        assert hold_resp.status_code == 200, f"Hold failed: {hold_resp.text}"
 
-        # Hold the seat
-        hold_resp = await client.post(
-            f"{BASE_URL}/showtimes/{showtime_id}/seats/{seat_id}/hold",
-            headers=headers,
-        )
-        if hold_resp.status_code != 200:
-            pytest.skip("Could not hold seat (may be already taken)")
-
-        # Book it
         booking_resp = await client.post(
-            f"{BASE_URL}/bookings",
+            "/bookings",
             json={"showtime_id": showtime_id, "seat_ids": [seat_id]},
             headers=headers,
         )
         assert booking_resp.status_code == 201
 
-        # Register another user and try the same seat
-        token2 = await register_and_login(client, "user_d@test.com", "pass123")
+        # A second user tries to hold the now-booked seat
+        token2 = await register_and_login(client)
         headers2 = {"Authorization": f"Bearer {token2}"}
 
-        hold2 = await client.post(
-            f"{BASE_URL}/showtimes/{showtime_id}/seats/{seat_id}/hold",
-            headers=headers2,
-        )
+        hold2 = await client.post(f"/showtimes/{showtime_id}/seats/{seat_id}/hold", headers=headers2)
         assert hold2.status_code == 409, f"Expected 409, got: {hold2.status_code}"
-
-        print(f"\nDouble-booking prevention confirmed: {hold2.json()['detail']}")
