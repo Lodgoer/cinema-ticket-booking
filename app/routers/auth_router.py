@@ -22,7 +22,7 @@ async def register(data: UserCreate, session: AsyncSession = Depends(get_session
     if existing is not None:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-        user = await repo.create(
+    user = await repo.create(
         name=data.name,
         email=data.email,
         password_hash=hash_password(data.password),
@@ -30,7 +30,6 @@ async def register(data: UserCreate, session: AsyncSession = Depends(get_session
     )
     await session.commit()
     return user
-
 
 @auth_router.post("/login", response_model=Token)
 async def login(

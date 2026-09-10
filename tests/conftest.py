@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from app.settings import settings
 from app.models import (
     Cinema, Hall, Movie, Showtime, SeatType, Seat, ShowtimeSeat,
-    AppUser, Booking,
+    AppUser, Booking, BookingSeat, Ticket,
 )
 
 
@@ -129,7 +129,30 @@ async def seeded_showtime(session):
 
     yield data
 
-    # Cleanup, in dependency order (children before parents):
+    # Cleanup, in dependency order (children before parents).
+    #
+    # Some tests create Booking/BookingSeat/Ticket rows against these
+    # seats through the real HTTP API (not through the test_user fixture),
+    # so this teardown can't assume anything already cleaned those up —
+    # it has to find and remove them itself before deleting showtime_seat,
+    # or Postgres's foreign-key constraints reject the delete.
+    showtime_seat_ids = [ss.id for ss in showtime_seats]
+
+    booking_seat_ids_result = await session.execute(
+        select(BookingSeat.id).where(BookingSeat.showtime_seat_id.in_(showtime_seat_ids))
+    )
+    booking_seat_ids = [row[0] for row in booking_seat_ids_result.all()]
+
+    if booking_seat_ids:
+        booking_ids_result = await session.execute(
+            select(BookingSeat.booking_id).where(BookingSeat.id.in_(booking_seat_ids))
+        )
+        booking_ids = {row[0] for row in booking_ids_result.all()}
+
+        await session.execute(delete(Ticket).where(Ticket.booking_seat_id.in_(booking_seat_ids)))
+        await session.execute(delete(BookingSeat).where(BookingSeat.id.in_(booking_seat_ids)))
+        await session.execute(delete(Booking).where(Booking.id.in_(booking_ids)))
+
     await session.execute(delete(ShowtimeSeat).where(ShowtimeSeat.showtime_id == showtime.id))
     await session.execute(delete(Showtime).where(Showtime.id == showtime.id))
     await session.execute(delete(Cinema).where(Cinema.id == cinema.id))  # cascades -> Hall -> Seat

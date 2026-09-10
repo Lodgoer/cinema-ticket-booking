@@ -5,14 +5,14 @@ A theater_manager may only mutate cinemas they're linked to via
 CinemaManager. An admin bypasses this check entirely — admin means
 "can touch anything", theater_manager means "can touch what I manage".
 """
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AppUser, CinemaManager, Hall, Seat, Showtime
 from app.auth import get_current_user
 from app.database import get_session
-from fastapi import Depends
+
 
 async def check_cinema_access(
     user: AppUser,
@@ -48,37 +48,38 @@ async def require_cinema_owner(
     """
     await check_cinema_access(user, cinema_id, session)
 
-    async def require_hall_owner(
+
+async def require_hall_owner(
     hall_id: int,
     user: AppUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-    ) -> Hall:
-        """
-        FastAPI dependency: use on any endpoint whose path includes
-        {hall_id}. Unlike require_cinema_owner, there's no cinema_id in the
-        URL here — so this looks the Hall up first to find its cinema_id,
-        then checks ownership.
+) -> Hall:
+    """
+    FastAPI dependency: use on any endpoint whose path includes
+    {hall_id}. Unlike require_cinema_owner, there's no cinema_id in the
+    URL here — so this looks the Hall up first to find its cinema_id,
+    then checks ownership.
 
-        Returns the Hall object itself (not just None) so the endpoint can
-        receive it directly via Depends(require_hall_owner) instead of
-        querying for it a second time.
-        """
-        result = await session.execute(select(Hall).where(Hall.id == hall_id))
-        hall = result.scalar_one_or_none()
-        if hall is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hall not found")
+    Returns the Hall object itself (not just None) so the endpoint can
+    receive it directly via Depends(require_hall_owner) instead of
+    querying for it a second time.
+    """
+    result = await session.execute(select(Hall).where(Hall.id == hall_id))
+    hall = result.scalar_one_or_none()
+    if hall is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hall not found")
 
-        await check_cinema_access(user, hall.cinema_id, session)
-        return hall
+    await check_cinema_access(user, hall.cinema_id, session)
+    return hall
 
-        async def _cinema_id_for_hall(hall_id: int, session: AsyncSession) -> int:
-            
-            """Shared lookup: resolve a hall_id to its cinema_id, or 404."""
-            result = await session.execute(select(Hall).where(Hall.id == hall_id))
-            hall = result.scalar_one_or_none()
-            if hall is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hall not found")
-        return hall.cinema_id
+
+async def _cinema_id_for_hall(hall_id: int, session: AsyncSession) -> int:
+    """Shared lookup: resolve a hall_id to its cinema_id, or 404."""
+    result = await session.execute(select(Hall).where(Hall.id == hall_id))
+    hall = result.scalar_one_or_none()
+    if hall is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hall not found")
+    return hall.cinema_id
 
 
 async def require_seat_owner(
@@ -109,6 +110,7 @@ async def require_showtime_owner(
     cinema_id = await _cinema_id_for_hall(showtime.hall_id, session)
     await check_cinema_access(user, cinema_id, session)
     return showtime
+
 
 async def get_managed_cinema_ids(
     session: AsyncSession,
