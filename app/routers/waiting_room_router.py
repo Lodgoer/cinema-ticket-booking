@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, require_role
+from app.authorization import require_showtime_owner
 from app.database import get_session
 from app.models import AppUser, Showtime
 from app.redis_client import get_redis
@@ -27,8 +28,6 @@ from app.services.waiting_room import (
     is_admitted,
     admit_batch,
     remove_from_queue,
-    BATCH_SIZE,
-    ADMISSION_INTERVAL,
     WAITING_ROOM_TOKEN_TTL_SECONDS,
 )
 
@@ -38,8 +37,12 @@ waiting_room_router = APIRouter(
 )
 
 
-@waiting_room_router.post("/join", status_code=status.HTTP_200_OK)
-async def join_queue(
+@waiting_room_router.post(
+    "/admit",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_showtime_owner)],
+)
+async def admit_next_batch(
     showtime_id: int,
     user: AppUser = Depends(get_current_user),
     r: Redis = Depends(get_redis),
