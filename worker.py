@@ -13,19 +13,16 @@ improvement — it would avoid the 1-minute window where a seat appears
 unavailable even though its hold expired. The trade-off is acceptable at
 this scale; in production, lazy check or event-driven expiry would be preferred.
 """
-import asyncio
 from datetime import datetime, timezone
-from sqlalchemy import select, update, text
-from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlalchemy import text
 
 from app.database import async_session
-from app.models import Booking, BookingSeat, ShowtimeSeat
 from app.redis_client import redis_client
 from app.services.booking_service import (
     sweep_expired_bookings as sweep_expired_bookings_service,
 )
 from app.services.waiting_room import (
-    waiting_room_key,
     admit_batch,
     BATCH_SIZE,
     ADMISSION_INTERVAL,

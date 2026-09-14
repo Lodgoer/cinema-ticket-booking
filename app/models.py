@@ -1,9 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text
+from sqlalchemy import String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint, text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 
 from app.database import Base

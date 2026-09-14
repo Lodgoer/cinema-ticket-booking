@@ -15,16 +15,13 @@ Access rules are the same as stats_router — admin sees all, theater_manager
 sees only their cinemas.
 """
 from app.authorization import get_managed_cinema_ids
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func, text
+from fastapi import APIRouter, Depends
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_role
 from app.database import get_session
-from app.models import (
-    AppUser, CinemaManager, Cinema, Hall, Seat,
-    Showtime, ShowtimeSeat, Booking, BookingSeat, Ticket, Movie,
-)
+from app.models import AppUser
 
 reports_router = APIRouter(
     prefix="/reports",

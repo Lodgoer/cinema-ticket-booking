@@ -16,9 +16,8 @@ Design notes:
   the "lazy check" improvement is documented but deferred.
 """
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 
-from sqlalchemy import select, update, text
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,10 +25,8 @@ from sqlalchemy.orm import selectinload
 from redis.asyncio import Redis
 
 from app.models import (
-    Booking, BookingSeat, ShowtimeSeat, Ticket, Payment,
+    Booking, BookingSeat, ShowtimeSeat, Ticket,
 )
-
-from app.redis_client import hold_key
 
 BOOKING_HOLD_MINUTES = 10  # matches Redis TTL
 

@@ -10,15 +10,15 @@ All queries are aggregate SQL — no materialized views except for
 occupancy_rate (which is in reports_router.py).
 """
 from app.authorization import get_managed_cinema_ids
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func, case, and_, or_
+from fastapi import APIRouter, Depends
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_role
 from app.database import get_session
 from app.models import (
-    AppUser, CinemaManager, Cinema, Hall, Seat,
-    Showtime, ShowtimeSeat, Booking, BookingSeat, Ticket, Payment, Movie,
+    AppUser, Cinema, Hall,
+    Showtime, ShowtimeSeat, Booking, BookingSeat, Ticket, Movie,
 )
 
 stats_router = APIRouter(

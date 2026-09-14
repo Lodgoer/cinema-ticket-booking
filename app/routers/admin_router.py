@@ -271,7 +271,6 @@ async def create_showtime(
         raise HTTPException(status_code=404, detail="Hall not found")
     await check_cinema_access(user, hall.cinema_id, session)
 
-    showtime_repo = ShowtimeRepository(session)
     seat_repo = SeatRepository(session)
 
     showtime = Showtime(**data.model_dump())
