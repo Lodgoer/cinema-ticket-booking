@@ -27,6 +27,8 @@ from redis.asyncio import Redis
 from app.models import (
     Booking, BookingSeat, ShowtimeSeat, Ticket,
 )
+from app.redis_client import hold_key
+from app.exceptions import NotFoundError, ConflictError
 
 BOOKING_HOLD_MINUTES = 10  # matches Redis TTL
 
@@ -64,13 +66,13 @@ async def create_booking(
     if len(showtime_seats) != len(seat_ids):
         found_ids = {ss.seat_id for ss in showtime_seats}
         missing = [sid for sid in seat_ids if sid not in found_ids]
-        raise ValueError(f"Seats not found for this showtime: {missing}")
+        raise NotFoundError(f"Seats not found for this showtime: {missing}")
 
     # Check none are already booked
     already_booked = [ss for ss in showtime_seats if ss.status == "booked"]
     if already_booked:
         booked_ids = [ss.seat_id for ss in already_booked]
-        raise ValueError(f"Seats already booked: {booked_ids}")
+        raise ConflictError(f"Seats already booked: {booked_ids}")
 
     # Check the caller actually holds every request seat in Redis.
     # Whitput this, /booking could be called directly, skipping the
@@ -81,7 +83,7 @@ async def create_booking(
         if held_by != str(user_id):
             not_held.append(seat_id)
     if not_held:
-        raise ValueError(
+        raise ConflictError(
             f"You don't hold these seats (hold missing or expired): {not_held}"
         )
 
@@ -114,7 +116,7 @@ async def create_booking(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise ValueError("One or more seats were just taken by another customer")
+        raise ConflictError("One or more seats were just taken by another customer")
 
     # Re-query with eager loading for the relationship
     result = await session.execute(
@@ -144,7 +146,7 @@ async def cancel_booking(
     booking = result.scalar_one_or_none()
 
     if booking is None:
-        raise ValueError("Booking not found")
+        raise NotFoundError("Booking not found")
     if booking.status in ("cancelled", "expired"):
         return booking  # idempotent — already done
 
@@ -198,9 +200,9 @@ async def confirm_payment(
     booking = result.scalar_one_or_none()
 
     if booking is None:
-        raise ValueError("Booking not found")
+        raise NotFoundError("Booking not found")
     if booking.status != "pending":
-        raise ValueError(f"Booking is {booking.status}, cannot confirm")
+        raise ConflictError(f"Booking is {booking.status}, cannot confirm")
 
     # Get active booking seats
     result = await session.execute(
@@ -212,7 +214,7 @@ async def confirm_payment(
     active_seats = list(result.scalars().all())
 
     if not active_seats:
-        raise ValueError("No active seats in this booking")
+        raise ConflictError("No active seats in this booking")
 
     # Issue tickets
     import uuid

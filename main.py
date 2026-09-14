@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from app.exceptions import NotFoundError, ConflictError
 from app.routers.admin_router import router as admin_router
 from app.routers.auth_router import auth_router
 from app.routers.hold_router import hold_router
@@ -23,6 +25,16 @@ app.include_router(reports_router)
 
 DATABASE_URL = "postgresql://postgres:mysecret@localhost:5432/cinema_db"
 REDIS_URL = "redis://localhost:6379"
+
+@app.exception_handler(NotFoundError)
+async def not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(ConflictError)
+async def conflict_handler(request: Request, exc: ConflictError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
 
 @app.get("/health")
 async def health_check():

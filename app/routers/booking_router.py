@@ -39,20 +39,14 @@ async def create_booking_endpoint(
     The user must have valid Redis holds for all requested seats.
     The booking gets a 10-minute expiry (matching the Redis TTL).
     """
-    try:
-        booking = await create_booking(
-            session=session,
-            r=r,
-            user_id=user.id,
-            showtime_id=data.showtime_id,
-            seat_ids=data.seat_ids,
-        )
-        return booking
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        )
+    booking = await create_booking(
+        session=session,
+        r=r,
+        user_id=user.id,
+        showtime_id=data.showtime_id,
+        seat_ids=data.seat_ids,
+    )
+    return booking
 
 
 @booking_router.post("/{booking_id}/cancel", response_model=BookingRead)
@@ -66,18 +60,12 @@ async def cancel_booking_endpoint(
     Uses SELECT ... FOR UPDATE to prevent race conditions on concurrent
     cancel requests for the same booking.
     """
-    try:
-        booking = await cancel_booking(
-            session=session,
-            booking_id=booking_id,
-            user_id=user.id,
-        )
-        return booking
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
+    booking = await cancel_booking(
+        session=session,
+        booking_id=booking_id,
+        user_id=user.id,
+    )
+    return booking
 
 
 @booking_router.get("/{booking_id}", response_model=BookingRead)
@@ -159,13 +147,7 @@ async def pay_for_booking(
         await session.commit()
 
         # Confirm booking and issue tickets
-        try:
-            await confirm_payment(session=session, booking_id=booking.id)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(e),
-            )
+        await confirm_payment(session=session, booking_id=booking.id)
 
         await session.refresh(payment)
         return payment

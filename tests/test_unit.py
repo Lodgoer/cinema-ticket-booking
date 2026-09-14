@@ -11,6 +11,7 @@ import pytest
 from decimal import Decimal
 
 from app.services.booking_service import create_booking, confirm_payment
+from app.exceptions import ConflictError
 from app.services.waiting_room import join_waiting_room, admit_batch
 from app.redis_client import hold_key
 
@@ -61,7 +62,7 @@ class TestBookingConfirmationGuard:
         )
         await confirm_payment(session, booking.id)  # first confirm: succeeds
 
-        with pytest.raises(ValueError, match="cannot confirm"):
+        with pytest.raises(ConflictError, match="cannot confirm"):
             await confirm_payment(session, booking.id)  # second: must reject
 
 # ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ class TestSeatClaim:
         # the seat is now 'booked' in Postgres, which create_booking checks
         # before it even looks at Redis.
         await _hold_seats(redis_client, showtime_id, [seat_id], test_user.id)
-        with pytest.raises(ValueError, match="already booked"):
+        with pytest.raises(ConflictError, match="already booked"):
             await create_booking(
                 session, redis_client, user_id=test_user.id,
                 showtime_id=showtime_id, seat_ids=[seat_id],
@@ -136,27 +137,31 @@ class TestPriceCalculation:
 #    real Redis. Confirms the nx=True fix (item 8): a user re-joining
 #    keeps their original queue position instead of moving to the back,
 #    and admit_batch admits strictly in join order.
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------
 
 class TestWaitingRoomFIFO:
     async def test_admit_batch_admits_in_join_order(self, redis_client):
         showtime_id = 999_001  # arbitrary id, isolated by not colliding with real data
+        try:
+            await join_waiting_room(redis_client, showtime_id, user_id=100)
+            await join_waiting_room(redis_client, showtime_id, user_id=200)
+            await join_waiting_room(redis_client, showtime_id, user_id=300)
 
-        await join_waiting_room(redis_client, showtime_id, user_id=100)
-        await join_waiting_room(redis_client, showtime_id, user_id=200)
-        await join_waiting_room(redis_client, showtime_id, user_id=300)
+            admitted = await admit_batch(redis_client, showtime_id, batch_size=2)
 
-        admitted = await admit_batch(redis_client, showtime_id, batch_size=2)
-
-        assert admitted == [100, 200]  # first two to join, in order
+            assert admitted == [100, 200]  # first two to join, in order
+        finally:
+            await redis_client.delete(waiting_room_key(showtime_id), admitted_key(showtime_id))
 
     async def test_rejoining_does_not_move_user_to_the_back(self, redis_client):
         showtime_id = 999_002
+        try:
+            await join_waiting_room(redis_client, showtime_id, user_id=1)
+            await join_waiting_room(redis_client, showtime_id, user_id=2)
+            await join_waiting_room(redis_client, showtime_id, user_id=1)  # re-join
 
-        await join_waiting_room(redis_client, showtime_id, user_id=1)
-        await join_waiting_room(redis_client, showtime_id, user_id=2)
-        await join_waiting_room(redis_client, showtime_id, user_id=1)  # re-join
+            admitted = await admit_batch(redis_client, showtime_id, batch_size=1)
 
-        admitted = await admit_batch(redis_client, showtime_id, batch_size=1)
-
-        assert admitted == [1]  # still first, not pushed behind user 2
+            assert admitted == [1]  # still first, not pushed behind user 2
+        finally:
+            await redis_client.delete(waiting_room_key(showtime_id), admitted_key(showtime_id))
