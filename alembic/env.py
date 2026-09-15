@@ -7,10 +7,18 @@ from alembic import context
 
 from app.database import Base
 from app.models import *
+from app.settings import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+# Override whatever's in alembic.ini with the real settings — alembic
+# uses a sync driver (psycopg2), the rest of the app uses async
+# (asyncpg), so swap the driver segment of the URL.
+sync_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+config.set_main_option("sqlalchemy.url", sync_url)
+
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

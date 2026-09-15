@@ -9,6 +9,7 @@ from app.routers.booking_router import booking_router
 from app.routers.waiting_room_router import waiting_room_router
 from app.routers.stats_router import stats_router
 from app.routers.reports_router import reports_router
+from app.settings import settings
 
 import asyncpg
 import redis
@@ -35,20 +36,22 @@ async def not_found_handler(request: Request, exc: NotFoundError):
 async def conflict_handler(request: Request, exc: ConflictError):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
-
 @app.get("/health")
 async def health_check():
     result = {"postgres": "unknown", "redis": "unknown"}
 
     try:
-        conn = await asyncpg.connect(DATABASE_URL)
+        # asyncpg.connect() wants a plain postgresql:// URL, not the
+        # +asyncpg driver suffix SQLAlchemy uses
+        asyncpg_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        conn = await asyncpg.connect(asyncpg_url)
         await conn.close()
         result["postgres"] = "connected"
     except Exception as e:
         result["postgres"] = f"error: {str(e)}"
 
     try:
-        r = redis.Redis.from_url(REDIS_URL)
+        r = redis.Redis.from_url(settings.redis_url)
         r.ping()
         result["redis"] = "connected"
     except Exception as e:
