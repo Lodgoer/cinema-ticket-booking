@@ -23,6 +23,9 @@ venv\Scripts\activate        # Windows
 # Install dependencies
 pip install -r requirements.txt
 
+# Copy the example env file and fill in your own values
+cp .env.example .env
+
 # Start infrastructure (Postgres + Redis)
 docker compose up -d
 
@@ -38,9 +41,9 @@ uvicorn main:app --reload
 # In a separate terminal: start the background worker
 python -m arq worker.WorkerSettings
 
-# In a separate terminal: run tests
-pytest tests/test_unit.py -v
-pytest tests/test_concurrency.py -v   # requires the server running
+# In a separate terminal: run the tests (no separate server needed —
+# the app runs in-process via httpx.ASGITransport)
+pytest tests/ -v
 ```
 
 Once running, interactive API docs are available at `http://127.0.0.1:8000/docs`.
@@ -54,8 +57,9 @@ Once running, interactive API docs are available at `http://127.0.0.1:8000/docs`
 ### Authentication
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/auth/register` | Register a new user |
+| POST | `/auth/register` | Register a new user (always created as `customer`) |
 | POST | `/auth/login` | Login, get JWT |
+| PATCH | `/auth/users/{user_id}/role` | Grant a role (admin only) |
 
 ### Seat Hold (requires auth)
 | Method | Path | Description |
@@ -69,7 +73,7 @@ Once running, interactive API docs are available at `http://127.0.0.1:8000/docs`
 |--------|------|-------------|
 | POST | `/waiting-room/{showtime_id}/join` | Join the queue |
 | GET | `/waiting-room/{showtime_id}/status` | Queue position & admission status |
-| POST | `/waiting-room/{showtime_id}/admit` | Trigger admission batch (admin/manager) |
+| POST | `/waiting-room/{showtime_id}/admit` | Trigger admission batch (admin/manager, scoped to their own cinema) |
 | POST | `/waiting-room/{showtime_id}/leave` | Leave the queue |
 
 ### Bookings (requires auth)
@@ -86,7 +90,7 @@ Once running, interactive API docs are available at `http://127.0.0.1:8000/docs`
 |--------|------|-------------|
 | POST | `/admin/cinemas` | Create cinema |
 | GET | `/admin/cinemas` | List cinemas |
-| ... | ... | Full CRUD for cinemas, halls, seat types, seats, movies, showtimes |
+| ... | ... | Full CRUD for cinemas, halls, seats, showtimes (scoped to a theater_manager's own cinemas); movies and seat types are a global catalog, admin-only |
 
 ### Statistics (requires admin/manager role)
 | Method | Path | Description |
@@ -120,9 +124,12 @@ This project covers the full journey from an admin setting up cinemas, halls, an
 | **Routers** | `app/routers/admin_router.py`, `app/routers/auth_router.py`, `app/routers/hold_router.py`, `app/routers/booking_router.py`, `app/routers/waiting_room_router.py`, `app/routers/stats_router.py`, `app/routers/reports_router.py` | FastAPI endpoints — the HTTP boundary |
 | **Services** | `app/services/booking_service.py`, `app/services/waiting_room.py` | Business logic — seat holds, booking lifecycle, waiting room admission |
 | **Repositories** | `app/repositories.py` | Generic CRUD data access (cinemas, halls, seats, movies, showtimes, users) |
+| **Authorization** | `app/authorization.py` | Cinema-ownership checks — FastAPI dependencies that scope a `theater_manager` to only the cinema(s) they manage |
+| **Exceptions** | `app/exceptions.py` | Domain exceptions (`NotFoundError`, `ConflictError`), mapped to HTTP status codes by global handlers in `main.py` |
 | **Models** | `app/models.py` | SQLAlchemy ORM models (14 tables) |
 | **Schemas** | `app/schemas.py` | Pydantic input/output models |
 | **Auth** | `app/auth.py` | JWT authentication + role-based authorization |
+| **Settings** | `app/settings.py` | Environment-based configuration (`.env`), loaded once via `pydantic-settings` |
 | **Payment** | `app/services/payment_provider.py` | Fake Stripe-like payment sandbox |
 | **Worker** | `worker.py` | Background tasks via arq (booking sweep, waiting room admission, view refresh) |
 
@@ -134,11 +141,13 @@ A `Seat` (row A, seat 1, VIP) is a physical fixture of a hall — it exists once
 
 #### Why `price_snapshot` instead of a live link to `seat_type.price`
 
-`showtime_seat.price_snapshot` copies the seat type's price at the moment a showtime is created, rather than joining to `seat_type.price` live at read time. This is deliberate: if the cinema later changes VIP pricing, tickets already sold at the old price must not silently change value. Snapshotting price at showtime-creation time keeps historical bookings and revenue reports accurate regardless of later price changes.
+`showtime_seat.price_snapshot` copies the seat type's price at the moment a showtime is created, rather than joining to `seat_type.price` live at read time. This is deliberate: if the cinema later changes VIP pricing, tickets already sold at the old price must not silently change value. Snapshotting price at showtime-creation time keeps historical bookings and revenue reports accurate regardless of later price changes. It's also what every revenue report sums per ticket — summing `booking.total_price` instead would double- or triple-count a multi-seat booking, since a join to its tickets repeats that row once per seat.
 
 #### Why `held` lives only in Redis, never in Postgres
 
 `showtime_seat.status` only ever takes the values `available` / `booked` — there is no `held` state in Postgres. A "held" seat (someone has it selected but hasn't paid) is a high-frequency, mostly-throwaway piece of state — most holds expire without ever converting to a booking. Writing every hold/release to Postgres would mean hammering the primary database on every seat click. Instead, holds live entirely in Redis as a TTL key (`SET NX EX 600`), and Postgres is only touched at the two moments that actually matter: a payment succeeding (`available` → `booked`) or a booking being cancelled/expiring (`booked` → `available`).
+
+`create_booking` itself checks Redis for a valid hold before ever touching Postgres — calling `POST /bookings` without first holding a seat through `/hold` is rejected, so the hold step (and the waiting-room gate in front of it) can't be bypassed by calling the booking endpoint directly.
 
 #### The partial unique index on `booking_seat` — and the bug it fixes
 
@@ -152,7 +161,7 @@ CREATE UNIQUE INDEX uq_active_booking_seat
     WHERE status = 'active';
 ```
 
-A cancelled row is excluded from the uniqueness check entirely — a new customer can claim the same seat with a brand-new `active` row, while the cancelled row remains as history. This is the single constraint the entire double-booking guarantee hinges on: it is enforced by Postgres itself, not application code, so it holds even under a race between two concurrent requests.
+A cancelled row is excluded from the uniqueness check entirely — a new customer can claim the same seat with a brand-new `active` row, while the cancelled row remains as history. This is the single constraint the entire double-booking guarantee hinges on: it is enforced by Postgres itself, not application code, so it holds even under a race between two concurrent requests. The `no_overlapping_showtimes` exclusion constraint on `showtime` (preventing two showtimes from double-booking the same hall) is declared the same way — directly on the `Showtime` model, not just as a bare migration — so it's visible to anyone reading the model and gets created even by `Base.metadata.create_all()`, not only `alembic upgrade`.
 
 #### Why this is enforced in the database, not application code
 
@@ -168,7 +177,17 @@ Sweep was chosen for simplicity within a one-week project scope. The trade-off �
 
 #### Why `CinemaManager` for row-level access control
 
-`theater_manager` users should only see data (statistics, reports) for cinemas they actually manage — not the entire chain. Rather than hardcoding cinema ownership onto the `AppUser` table (which would only allow one manager per cinema), a junction table `cinema_manager (user_id, cinema_id)` was introduced. This allows a many-to-many relationship (one manager can cover several cinemas; a cinema could have more than one manager) and keeps authorization logic in one place: every stats/reports endpoint calls `get_managed_cinema_ids()`, which returns `None` for admins (no filter) or a list of cinema IDs for managers (used in a `WHERE cinema_id IN (...)` filter).
+`theater_manager` users should only see data (statistics, reports) and mutate resources (halls, seats, showtimes) for cinemas they actually manage — not the entire chain. Rather than hardcoding cinema ownership onto the `AppUser` table (which would only allow one manager per cinema), a junction table `cinema_manager (user_id, cinema_id)` was introduced. This allows a many-to-many relationship (one manager can cover several cinemas; a cinema could have more than one manager).
+
+Authorization logic lives in one place, `app/authorization.py`, as a set of FastAPI dependencies:
+- `require_cinema_owner`, `require_hall_owner`, `require_seat_owner`, `require_showtime_owner` — each resolves the relevant `cinema_id` (directly from the URL, or by walking up through `hall`/`showtime`/`seat` when it isn't) and checks ownership before the endpoint body runs at all, the same way `[Authorize]` gates a controller action in ASP.NET Core. An `admin` bypasses the check entirely.
+- `get_managed_cinema_ids()` — used by the stats/reports endpoints, returns `None` for admins (no filter) or a list of cinema IDs for managers (used in a `WHERE cinema_id IN (...)` filter).
+
+`Movie` and `SeatType` have no `cinema_id` at all — they're a shared catalog (a movie can play at many cinemas), so their write endpoints are restricted to `admin` only rather than scoped by ownership.
+
+#### Domain exceptions instead of per-route try/except
+
+Service functions (`create_booking`, `cancel_booking`, `confirm_payment`, …) raise `NotFoundError` or `ConflictError` (`app/exceptions.py`) rather than a bare `ValueError`, so the *meaning* of a failure travels with the exception itself. Two global handlers registered in `main.py` translate these into `404` and `409` responses respectively — routers no longer need a `try/except` around every service call just to pick the right status code.
 
 #### Materialized View: Occupancy Rate
 
@@ -181,7 +200,7 @@ Sweep was chosen for simplicity within a one-week project scope. The trade-off �
 | Revenue over time | Regular aggregate query | Time-series data is more valuable fresh |
 | Peak hours | Regular aggregate query | Lightweight aggregation, no complex JOINs |
 
-The materialized view is refreshed every **5 minutes** by the background worker (`REFRESH MATERIALIZED VIEW CONCURRENTLY`). The `CONCURRENTLY` flag ensures the view remains readable during refresh.
+The materialized view is refreshed every **5 minutes** by the background worker (`REFRESH MATERIALIZED VIEW CONCURRENTLY`). The `CONCURRENTLY` flag ensures the view remains readable during refresh; it requires the view to already hold data from an earlier plain `REFRESH`, which is why the Quick Start above runs one manually right after the first migration.
 
 **Trade-off**: The occupancy data may be up to 5 minutes stale. This is acceptable for dashboard views where approximate numbers are fine. For real-time seat availability, the Redis hold map + Postgres status is the source of truth.
 
@@ -189,7 +208,7 @@ The materialized view is refreshed every **5 minutes** by the background worker 
 
 #### Concurrency: proving double-booking is structurally impossible
 
-`tests/test_concurrency.py` simulates two users racing for the same seat with `asyncio.gather`, firing both hold requests simultaneously:
+`tests/test_concurrency.py` simulates two users racing for the same seat with `asyncio.gather`, firing both hold requests simultaneously against the app in-process (via `httpx.ASGITransport` — no separate `uvicorn` process needed to run the tests), with isolated cinema/hall/showtime/seat data created fresh per test run:
 
 ```python
 hold_a, hold_b = await asyncio.gather(
@@ -205,17 +224,24 @@ Manual verification of the full claim → cancel → reclaim cycle was also run 
 
 #### Unit tests
 
-`tests/test_unit.py` (20 tests, all passing) covers:
-- Payment state machine transitions (valid and invalid)
-- `IntegrityError` → `409 Conflict` translation
-- Price calculation from `price_snapshot` (including decimal precision)
-- Waiting room FIFO ordering guarantees
+`tests/test_unit.py` (7 tests) exercises the real service functions against a live Postgres + Redis instance (fixtures in `tests/conftest.py` seed isolated, uniquely-named data per test and clean up afterward) — no mocks, no source-code string matching:
+- `TestBookingConfirmationGuard` — a `pending` booking confirms successfully and issues tickets; confirming an already-confirmed booking raises `ConflictError`
+- `TestSeatClaim` — booking a seat that's already `booked` is rejected
+- `TestPriceCalculation` — `total_price` correctly sums each seat's `price_snapshot`, not `Decimal` arithmetic in isolation
+- `TestWaitingRoomFIFO` — `admit_batch` admits strictly in join order, and re-joining the queue doesn't push a user to the back
+
+Together with `test_concurrency.py`'s 2 tests, the full suite (9 tests) passes repeatably — verified 3+ consecutive runs with no manual cleanup between them.
 
 #### End-to-end flow tested manually via Swagger (`/docs`)
 
 `hold seat → create booking (pending) → pay → get tickets (QR code)`, confirmed at each step that the seat map correctly reflected `available` → `held` → `booked` transitions, combining live Redis state with Postgres state.
 
 ### Configuration
+
+Environment variables (`.env`, see `.env.example`), loaded once via `app/settings.py`:
+- `DATABASE_URL` / `SECRET_KEY` — required, no fallback; the app refuses to start without them
+- `REDIS_URL` — optional, defaults to `redis://localhost:6379`
+- `ENVIRONMENT` — optional, defaults to `development`; set to `production` to disable SQL statement logging
 
 Key settings in `app/services/waiting_room.py`:
 - `BATCH_SIZE = 10` — users admitted per batch
@@ -230,7 +256,8 @@ Key settings in `app/routers/hold_router.py`:
 
 ### Known Limitations
 
-- `tests/test_concurrency.py` uses hardcoded `showtime_id=1` and `seat_id=1`, coupling tests to specific seeded data. Planned fix: isolated test fixtures per test run (see TODO in the test file).
-- `app/auth.py`'s `SECRET_KEY` is currently hardcoded for local development and must move to an environment variable (`.env`) before any real deployment.
-- Booking expiry uses a 60-second sweep rather than lazy/event-driven expiry (see "Why background sweep" above) — acceptable at this project's scale but noted as a scaling consideration..
-- Some secret keys are hard coded.
+- The payment provider (`app/services/payment_provider.py`) is a fake, sandboxed implementation — it isn't wired to a real payment gateway (Stripe, etc.).
+- No rate limiting, email verification, or password-reset flow.
+- Automated test coverage focuses on the core booking/concurrency/auth paths; the admin CRUD endpoints (cinemas, halls, seats, movies, showtimes) are exercised manually via Swagger rather than by automated tests.
+- Booking expiry uses a 60-second sweep rather than lazy/event-driven expiry (see "Why background sweep" above) — acceptable at this project's scale but noted as a scaling consideration.
+- The `theater_manager` role name is under reconsideration — `cinema_manager` more precisely reflects that a manager is scoped to specific cinemas, not an entire theater chain.
